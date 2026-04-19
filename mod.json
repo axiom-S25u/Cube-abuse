@@ -1,0 +1,31 @@
+{
+	"geode": "5.6.1",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "axiom.cube-abuse",
+	"name": "Cube Abuse",
+	"version": "v1.0.0",
+	"developer": "Axiom",
+	"tags" : ["joke", "interface", "offline"],
+	"resources": {
+    "files": [
+        "logo.png",
+        "resources/hammer.png",
+        "resources/boot.png",
+        "resources/knife.png",
+        "resources/brick.png",
+        "resources/bat.png",
+        "resources/taser.png",
+        "resources/chainsaw.png",
+        "resources/nuke.png"
+	]
+	},
+	"description": "kick your icon around like it owes you money",
+	"dependencies": {
+		"geode.node-ids": ">=v1.23.3"
+	}
+}
