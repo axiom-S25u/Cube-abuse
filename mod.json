@@ -12,17 +12,12 @@
 	"developer": "Axiom",
 	"tags" : ["joke", "interface", "offline"],
 	"resources": {
-    "files": [
-        "logo.png",
-        "resources/hammer.png",
-        "resources/boot.png",
-        "resources/knife.png",
-        "resources/brick.png",
-        "resources/bat.png",
-        "resources/taser.png",
-        "resources/chainsaw.png",
-        "resources/nuke.png"
-	]
+		"sprites": [
+			"resources/*.png"
+		],
+		"files": [
+			"resources/*.mp3"
+		]
 	},
 	"description": "kick your icon around like it owes you money",
 	"dependencies": {
