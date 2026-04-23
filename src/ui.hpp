@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <cstdint>
+#include <chrono>
 
 using namespace geode::prelude;
 
@@ -22,11 +24,11 @@ static int topZ(CCNode* p) {
 }
 
 inline bool g_sandboxOpen = false;
-inline int g_coins = 0;
+inline int64_t g_coins = 0;
 inline bool g_bodyInit = false;
 
 struct BodyShit {
-    CCNode* node;
+    CCNode* node = nullptr;
     CCPoint vel;
     CCPoint pos;
     float angVel;
@@ -38,7 +40,7 @@ inline BodyShit g_body;
 
 struct WepDef {
     const char* name;
-    int cost;
+    int64_t cost;
     int damage;
     ccColor3B color;
     const char* iconName;
@@ -52,24 +54,24 @@ static WepDef g_weaps[] = {
     { "Bat",      200,   45,  ccc3(255, 255, 255), "bat.png"_spr      },
     { "Taser",    500,   60,  ccc3(255, 255, 255), "taser.png"_spr    },
     { "Chainsaw", 1500,  85,  ccc3(255, 255, 255), "chainsaw.png"_spr },
-    { "Nuke",     15000, 1000000, ccc3(255, 255, 255), "nuke.png"_spr     }, //damage *should* be enough
+    { "Nuke",     15000, 1000000000, ccc3(255, 255, 255), "nuke.png"_spr     }, //damage *should* be enough, as a note it wasnt
 }; // this is for ery, if it wasnt clean enough before
 inline const int WEP_COUNT = 8;
 inline bool g_weapUnlock[] = { true, true, true, false, false, false, false, false };
 
 inline double g_lastNuke = -99999.0;
 
-inline const int HP_MAX_UPG = 999999;
+inline const int HP_MAX_UPG = 60;
 inline int g_hpLvl = 0;
 
-inline const int DMG_MAX_UPG = 999999;
+inline const int DMG_MAX_UPG = 60;
 inline int g_dmgLvl = 0;
 
-inline const int COIN_MAX_UPG = 999999;
+inline const int COIN_MAX_UPG = 60;
 inline int g_coinLvl = 0;
 
 struct WepEnt {
-    CCSprite* spr;
+    CCSprite* spr = nullptr;
     int id;
     bool dragging;
     CCPoint offset;
@@ -85,7 +87,7 @@ inline void saveWeaps() {
     Mod::get()->setSavedValue<int>("hp_upgrade_level", g_hpLvl);
     Mod::get()->setSavedValue<int>("dmg_upgrade_level", g_dmgLvl);
     Mod::get()->setSavedValue<int>("coin_upgrade_level", g_coinLvl);
-    Mod::get()->setSavedValue<int>("total_coins", g_coins);
+    Mod::get()->setSavedValue<int64_t>("total_coins_v2", g_coins);
 }
 
 inline void loadWeaps() {
@@ -98,50 +100,61 @@ inline void loadWeaps() {
     if (Mod::get()->hasSavedValue("hp_upgrade_level")) g_hpLvl = Mod::get()->getSavedValue<int>("hp_upgrade_level");
     if (Mod::get()->hasSavedValue("dmg_upgrade_level")) g_dmgLvl = Mod::get()->getSavedValue<int>("dmg_upgrade_level");
     if (Mod::get()->hasSavedValue("coin_upgrade_level")) g_coinLvl = Mod::get()->getSavedValue<int>("coin_upgrade_level");
-    if (Mod::get()->hasSavedValue("total_coins")) g_coins = Mod::get()->getSavedValue<int>("total_coins");
+    if (Mod::get()->hasSavedValue("total_coins_v2")) {
+        g_coins = Mod::get()->getSavedValue<int64_t>("total_coins_v2");
+    } else if (Mod::get()->hasSavedValue("total_coins")) {
+        g_coins = (int64_t)Mod::get()->getSavedValue<int>("total_coins");
+    }
 }
 
 static float calcMaxHp() {
-    return 100.0f * powf(1.35f, (float)g_hpLvl);
+    return 100.0f * powf(1.15f, (float)g_hpLvl);
 }
 
-static float calcDmgBonus() {
-    return g_dmgLvl * 40.0f;
+static float calcDmgMulti() {
+    return 1.0f + (float)g_dmgLvl * 0.25f;
 }
 
 static float calcCoinMult() {
-    return 1.0f + g_coinLvl * 0.5f;
+    return 1.0f + g_coinLvl * 0.15f;
 }
 
-static int hpCost(int lvl) {
-    return (int)(200 * powf(2.4f, (float)lvl));
+static int64_t hpCost(int lvl) {
+    if (lvl >= HP_MAX_UPG) return -1;
+    return (int64_t)(200 * powf(1.8f, (float)lvl));
 }
 
-static int dmgCost(int lvl) {
-    return (int)(300 * powf(2.5f, (float)lvl));
+static int64_t dmgCost(int lvl) {
+    if (lvl >= DMG_MAX_UPG) return -1;
+    return (int64_t)(300 * powf(1.9f, (float)lvl));
 }
 
-static int coinCost(int lvl) {
-    return (int)(500 * powf(2.6f, (float)lvl));
+static int64_t coinCost(int lvl) {
+    if (lvl >= COIN_MAX_UPG) return -1;
+    return (int64_t)(500 * powf(2.0f, (float)lvl));
 }
 
-static int killReward(float maxHp) {
+static int64_t killReward(float maxHp) {
     float base = 30.0f + rand() % 60;
     float bonus = powf(maxHp / 100.0f, 0.72f);
-    return (int)(base * bonus * calcCoinMult());
+    int64_t res = (int64_t)(base * bonus * calcCoinMult());
+    if (res < 0) res = 999999;
+    return res;
 }
 
 class ShopLayer : public Popup {
 public:
     std::function<void()> closeCB;
-    CCLabelBMFont* coinText;
-    CCNode* weapNode;
-    CCNode* upgNode;
+    std::function<void()> buyCB;
+    CCLabelBMFont* coinText = nullptr;
+    CCNode* weapNode = nullptr;
+    CCNode* upgNode = nullptr;
 
-    static ShopLayer* create(std::function<void()> cb) {
+    static ShopLayer* create(std::function<void()> cb, std::function<void()> bcb) {
         auto ret = new ShopLayer();
         if (ret && ret->init(440.f, 290.f)) {
             ret->closeCB = cb;
+            ret->buyCB = bcb;
             ret->autorelease();
             return ret;
         }
@@ -151,29 +164,24 @@ public:
 
     bool init(float w, float h) {
         if (!Popup::init(w, h)) return false;
-
+        m_mainLayer->setID("shop-main-layer");
         float panelW = m_mainLayer->getContentSize().width;
         float panelH = m_mainLayer->getContentSize().height;
-
         this->setTitle("Shop");
-
         coinText = CCLabelBMFont::create("", "chatFont.fnt");
         coinText->setPosition(ccp(panelW * 0.85f, panelH - 25.0f));
         m_mainLayer->addChild(coinText, topZ(m_mainLayer) + 1);
         refreshCoins();
-
         CCMenu* shopMenu = CCMenu::create();
         shopMenu->setPosition(ccp(0.0f, 0.0f));
+        shopMenu->setID("purchase-menu");
         m_mainLayer->addChild(shopMenu, topZ(m_mainLayer) + 1);
-
         weapNode = CCNode::create();
         m_mainLayer->addChild(weapNode, topZ(m_mainLayer) + 1);
         buildWeapList(shopMenu, panelW, panelH);
-
         upgNode = CCNode::create();
         m_mainLayer->addChild(upgNode, topZ(m_mainLayer) + 1);
         buildUpgSection(shopMenu, panelW, panelH);
-
         return true;
     }
 
@@ -184,24 +192,30 @@ public:
     }
 
     void onUpgradeHp(CCObject*) {
-        int cost = hpCost(g_hpLvl);
+        int64_t cost = hpCost(g_hpLvl);
+        if (cost < 0) return;
         if (g_coins < cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
         g_coins -= cost; g_hpLvl++; saveWeaps(); rebuildDynamicContent();
+        if (buyCB) buyCB();
     }
 
     void onUpgradeDmg(CCObject*) {
-        int cost = dmgCost(g_dmgLvl);
+        int64_t cost = dmgCost(g_dmgLvl);
+        if (cost < 0) return;
         if (g_coins < cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
         g_coins -= cost; g_dmgLvl++; saveWeaps(); rebuildDynamicContent();
+        if (buyCB) buyCB();
     }
 
     void onUpgradeCoin(CCObject*) {
-        int cost = coinCost(g_coinLvl);
+        int64_t cost = coinCost(g_coinLvl);
+        if (cost < 0) return;
         if (g_coins < cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
         g_coins -= cost; g_coinLvl++; saveWeaps(); rebuildDynamicContent();
+        if (buyCB) buyCB();
     }
 
-    void rebuildDynamicContent(); // decl
+    void rebuildDynamicContent();
 
     void buildWeapList(CCMenu* shopMenu, float panelW, float panelH) {
         if (weapNode) weapNode->removeAllChildren();
@@ -218,7 +232,6 @@ public:
             );
             rowBg->setPosition(ccp(6.0f, rowY - (gap - 2.0f) * 0.5f));
             weapNode->addChild(rowBg, topZ(weapNode) + 1);
-
             CCSprite* iconSpr = CCSprite::create(wd.iconName);
             if (!iconSpr) iconSpr = CCSprite::createWithSpriteFrameName("edit_eBtn_001.png");
             if (iconSpr) {
@@ -226,13 +239,11 @@ public:
                 iconSpr->setScale(18.0f / iconSpr->getContentSize().height);
                 weapNode->addChild(iconSpr, topZ(weapNode) + 1);
             }
-
             CCLabelBMFont* nameLbl = CCLabelBMFont::create(wd.name, "chatFont.fnt");
             nameLbl->setScale(0.46f);
             nameLbl->setAnchorPoint(ccp(0.0f, 0.5f));
             nameLbl->setPosition(ccp(leftX - 8.0f, rowY));
             weapNode->addChild(nameLbl, topZ(weapNode) + 1);
-
             if (i == 7) {
                 CCLabelBMFont* coolLbl = CCLabelBMFont::create("5m Cooldown", "chatFont.fnt");
                 coolLbl->setScale(0.25f);
@@ -240,7 +251,6 @@ public:
                 coolLbl->setPosition(ccp(leftX + 25.0f, rowY - 8.0f));
                 weapNode->addChild(coolLbl, topZ(coolLbl) + 1);
             }
-
             if (g_weapUnlock[i]) {
                 CCLabelBMFont* oL = CCLabelBMFont::create("OWNED", "chatFont.fnt");
                 oL->setScale(0.38f);
@@ -261,51 +271,27 @@ public:
         if (upgNode) upgNode->removeAllChildren();
         float cx = panelW * 0.75f;
         float topY = panelH - 42.0f;
-
-        CCLabelBMFont* hpInfo = CCLabelBMFont::create(
-            fmt::format("HP: {:.0f} [Lv {}]", calcMaxHp(), g_hpLvl).c_str(),
-            "chatFont.fnt"
-        );
-        hpInfo->setScale(0.45f);
-        hpInfo->setColor(ccc3(100, 230, 100));
-        hpInfo->setPosition(ccp(cx, topY - 16.0f));
+        CCLabelBMFont* hpInfo = CCLabelBMFont::create(fmt::format("HP: {:.0f} [Lv {}]", calcMaxHp(), g_hpLvl).c_str(), "chatFont.fnt");
+        hpInfo->setScale(0.45f); hpInfo->setColor(ccc3(100, 230, 100)); hpInfo->setPosition(ccp(cx, topY - 16.0f));
         upgNode->addChild(hpInfo, topZ(upgNode) + 1);
-
-        ButtonSprite* hpBtnSpr = ButtonSprite::create(fmt::format("Upgrade HP  ${}", hpCost(g_hpLvl)).c_str(), "chatFont.fnt", "GJ_button_01.png", 0.5f);
+        int64_t hC = hpCost(g_hpLvl);
+        ButtonSprite* hpBtnSpr = ButtonSprite::create(hC >= 0 ? fmt::format("Upgrade HP ${}", hC).c_str() : "MAXED", "chatFont.fnt", hC >= 0 ? "GJ_button_01.png" : "GJ_button_05.png", 0.5f);
         CCMenuItemSpriteExtra* uBtn = CCMenuItemSpriteExtra::create(hpBtnSpr, this, menu_selector(ShopLayer::onUpgradeHp));
-        uBtn->setPosition(ccp(cx, topY - 40.0f));
-        uBtn->setTag(9999);
-        shopMenu->addChild(uBtn, topZ(shopMenu) + 1);
-
-        CCLabelBMFont* dmgInfo = CCLabelBMFont::create(
-            fmt::format("+{:.0f} DMG bonus [Lv {}]", calcDmgBonus(), g_dmgLvl).c_str(),
-            "chatFont.fnt"
-        );
-        dmgInfo->setScale(0.45f);
-        dmgInfo->setColor(ccc3(255, 140, 80));
-        dmgInfo->setPosition(ccp(cx, topY - 74.0f));
+        uBtn->setPosition(ccp(cx, topY - 40.0f)); shopMenu->addChild(uBtn, topZ(shopMenu) + 1);
+        CCLabelBMFont* dmgInfo = CCLabelBMFont::create(fmt::format("x{:.1f} DMG [Lv {}]", calcDmgMulti(), g_dmgLvl).c_str(), "chatFont.fnt");
+        dmgInfo->setScale(0.45f); dmgInfo->setColor(ccc3(255, 140, 80)); dmgInfo->setPosition(ccp(cx, topY - 74.0f));
         upgNode->addChild(dmgInfo, topZ(upgNode) + 1);
-
-        ButtonSprite* dmgBtnSpr = ButtonSprite::create(fmt::format("Upgrade DMG  ${}", dmgCost(g_dmgLvl)).c_str(), "chatFont.fnt", "GJ_button_01.png", 0.5f);
-        CCMenuItemSpriteExtra* dBtnFixed = CCMenuItemSpriteExtra::create(dmgBtnSpr, this, menu_selector(ShopLayer::onUpgradeDmg));
-        dBtnFixed->setPosition(ccp(cx, topY - 98.0f));
-        dBtnFixed->setTag(10000);
-        shopMenu->addChild(dBtnFixed, topZ(shopMenu) + 1);
-
-        CCLabelBMFont* coinInfo = CCLabelBMFont::create(
-            fmt::format("x{:.1f} Multi [Lv {}]", calcCoinMult(), g_coinLvl).c_str(),
-            "chatFont.fnt"
-        );
-        coinInfo->setScale(0.45f);
-        coinInfo->setColor(ccc3(255, 215, 0));
-        coinInfo->setPosition(ccp(cx, topY - 132.0f));
+        int64_t dC = dmgCost(g_dmgLvl);
+        ButtonSprite* dmgBtnSpr = ButtonSprite::create(dC >= 0 ? fmt::format("Upgrade DMG ${}", dC).c_str() : "MAXED", "chatFont.fnt", dC >= 0 ? "GJ_button_01.png" : "GJ_button_05.png", 0.5f);
+        CCMenuItemSpriteExtra* dBtn = CCMenuItemSpriteExtra::create(dmgBtnSpr, this, menu_selector(ShopLayer::onUpgradeDmg));
+        dBtn->setPosition(ccp(cx, topY - 98.0f)); shopMenu->addChild(dBtn, topZ(shopMenu) + 1);
+        CCLabelBMFont* coinInfo = CCLabelBMFont::create(fmt::format("x{:.1f} Cash [Lv {}]", calcCoinMult(), g_coinLvl).c_str(), "chatFont.fnt");
+        coinInfo->setScale(0.45f); coinInfo->setColor(ccc3(255, 215, 0)); coinInfo->setPosition(ccp(cx, topY - 132.0f));
         upgNode->addChild(coinInfo, topZ(upgNode) + 1);
-
-        ButtonSprite* coinBtnSpr = ButtonSprite::create(fmt::format("Upgrade Greed ${}", coinCost(g_coinLvl)).c_str(), "chatFont.fnt", "GJ_button_01.png", 0.5f);
+        int64_t cC = coinCost(g_coinLvl);
+        ButtonSprite* coinBtnSpr = ButtonSprite::create(cC >= 0 ? fmt::format("Greed ${}", cC).c_str() : "MAXED", "chatFont.fnt", cC >= 0 ? "GJ_button_01.png" : "GJ_button_05.png", 0.5f);
         CCMenuItemSpriteExtra* cBtn = CCMenuItemSpriteExtra::create(coinBtnSpr, this, menu_selector(ShopLayer::onUpgradeCoin));
-        cBtn->setPosition(ccp(cx, topY - 156.0f));
-        cBtn->setTag(10001);
-        shopMenu->addChild(cBtn, topZ(shopMenu) + 1);
+        cBtn->setPosition(ccp(cx, topY - 156.0f)); shopMenu->addChild(cBtn, topZ(shopMenu) + 1);
     }
 
     void refreshCoins() {
@@ -315,31 +301,17 @@ public:
     void onBuy(CCObject* sender) {
         int idx = sender->getTag();
         if (g_coins < g_weaps[idx].cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
-        g_coins -= g_weaps[idx].cost;
-        g_weapUnlock[idx] = true;
-        saveWeaps();
-        rebuildDynamicContent();
+        g_coins -= g_weaps[idx].cost; g_weapUnlock[idx] = true; saveWeaps(); rebuildDynamicContent();
+        if (buyCB) buyCB();
     }
 };
 
 inline void ShopLayer::rebuildDynamicContent() {
     float panelW = m_mainLayer->getContentSize().width;
     float panelH = m_mainLayer->getContentSize().height;
-
-    CCMenu* shopMenu = nullptr;
-    for (auto node : m_mainLayer->getChildrenExt()) {
-        CCMenu* m = dynamic_cast<CCMenu*>(node);
-        if (m) { shopMenu = m; break; }
-    }
+    CCMenu* shopMenu = typeinfo_cast<CCMenu*>(m_mainLayer->getChildByID("purchase-menu"));
     if (!shopMenu) return;
-
-    std::vector<CCNode*> toRemove;
-    for (auto n : shopMenu->getChildrenExt()) {
-        int tag = n->getTag();
-        if ((tag >= 0 && tag < WEP_COUNT) || tag == 9999 || tag == 10000 || tag == 10001) toRemove.push_back(n);
-    }
-    for (CCNode* n : toRemove) n->removeFromParent();
-
+    shopMenu->removeAllChildren();
     buildWeapList(shopMenu, panelW, panelH);
     buildUpgSection(shopMenu, panelW, panelH);
     refreshCoins();

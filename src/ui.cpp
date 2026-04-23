@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include <Geode/modify/MenuLayer.hpp>
 #include <cstdlib>
+#include <chrono>
 
 // ui.hpp handles the common globals with inline now
 // axiom was here again
@@ -9,14 +10,20 @@ static float g_cubeHp = 100.0f;
 static bool g_cubeAlive = true;
 static bool g_respawning = false;
 
+static double getRealTime() {
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() / 1000.0;
+}
+
 class SandboxLayer : public CCLayer {
 public:
-    SimplePlayer* iconPlayer;
-    CCLayerColor* hpBg;
-    CCLayerColor* hpFill;
-    CCLabelBMFont* hpText;
-    CCLabelBMFont* coinText;
-    CCLabelBMFont* nukeWarn;
+    SimplePlayer* iconPlayer = nullptr;
+    CCLayerColor* hpBg = nullptr;
+    CCLayerColor* hpFill = nullptr;
+    CCLabelBMFont* hpText = nullptr;
+    CCLabelBMFont* coinText = nullptr;
+    CCLabelBMFont* nukeWarn = nullptr;
+    CCLabelBMFont* nukeCoolLabel = nullptr;
     std::vector<WepEnt> ents;
     float floorY;
     float wallL;
@@ -58,14 +65,20 @@ public:
         setupWeapButtons();
         setupCloseButton();
         setupResetButton();
+        setupNukeCooldownLabel();
 
         this->setTouchEnabled(true);
+        this->setKeypadEnabled(true);
         this->schedule(schedule_selector(SandboxLayer::physicsUpdate), 1.0f / 60.0f);
         return true;
     }
 
     void registerWithTouchDispatcher() override {
         CCTouchDispatcher::get()->addTargetedDelegate(this, -128, true);
+    }
+
+    void keyBackClicked() override {
+        onClose(nullptr);
     }
 
     void onExit() override {
@@ -111,6 +124,7 @@ public:
     }
 
     void refreshHpBar() {
+        if (!hpFill || !hpText) return;
         float ratio = g_cubeHp / g_cubeMaxHp;
         if (ratio < 0.0f) ratio = 0.0f;
         hpFill->setContentSize(CCSizeMake(160.0f * ratio, 14.0f));
@@ -127,7 +141,16 @@ public:
     }
 
     void refreshCoinHud() {
-        coinText->setString(fmt::format("${}", g_coins).c_str());
+        if (coinText) coinText->setString(fmt::format("${}", g_coins).c_str());
+    }
+
+    void setupNukeCooldownLabel() {
+        CCSize winSize = CCDirector::sharedDirector()->getWinSize();
+        nukeCoolLabel = CCLabelBMFont::create("", "chatFont.fnt");
+        nukeCoolLabel->setScale(0.3f);
+        nukeCoolLabel->setColor(ccc3(255, 100, 100));
+        nukeCoolLabel->setPosition(ccp(winSize.width - 110.0f, 40.0f));
+        this->addChild(nukeCoolLabel, topZ(this) + 1);
     }
 
     void dealDmg(float dmg) {
@@ -139,32 +162,37 @@ public:
     }
 
     void killCube() {
-        if (!g_cubeAlive) return;
+        if (!g_cubeAlive || !iconPlayer) return;
         g_cubeAlive = false;
         g_respawning = true;
         g_bodyInit = false;
+        g_body.dragging = false;
         g_coins += killReward(g_cubeMaxHp);
         refreshCoinHud();
         saveWeaps();
         iconPlayer->runAction(CCSequence::create(
-            CCFadeOut::create(0.5f),
+            CCFadeOut::create(0.4f),
             CCCallFunc::create(this, callfunc_selector(SandboxLayer::doRespawn)),
             nullptr
         ));
     }
 
     void doRespawn() {
-        if (iconPlayer) iconPlayer->removeFromParent();
+        if (iconPlayer) { iconPlayer->removeFromParent(); iconPlayer = nullptr; }
         g_respawning = false;
         spawnCube();
         refreshHpBar();
     }
 
     void onReset(CCObject*) {
-        if (g_respawning) return;
-        if (iconPlayer) iconPlayer->removeFromParent();
+        if (g_respawning || !iconPlayer) return;
+        g_body.dragging = false;
+        g_bodyInit = false;
+        iconPlayer->stopAllActions();
+        iconPlayer->removeFromParent();
+        iconPlayer = nullptr;
         g_cubeAlive = false;
-        doRespawn();
+        this->doRespawn();
     }
 
     void setupResetButton() {
@@ -185,19 +213,19 @@ public:
         float btnX = winSize.width - 45.0f;
         float startY = winSize.height - 60.0f;
         for (int i = 0; i < WEP_COUNT; i++) {
-            ButtonSprite* bspr = ButtonSprite::create(g_weaps[i].name, 0, false, "goldFont.fnt", "GJ_button_01.png", 30.0f, 0.30f);
+            ButtonSprite* bspr = ButtonSprite::create(g_weaps[i].name, 0, false, "goldFont.fnt", "GJ_button_01.png", 30.0f, 0.25f);
             CCMenuItemSpriteExtra* btn = CCMenuItemSpriteExtra::create(bspr, this, menu_selector(SandboxLayer::onWeapon));
             if (i == 7) { // NUKE
-                btn->setPosition(ccp(470.0f, 35.0f));
+                btn->setPosition(ccp(winSize.width - 110.0f, 20.0f));
             } else {
-                btn->setPosition(ccp(btnX, startY - 32.0f * i));
+                btn->setPosition(ccp(btnX, startY - 34.0f * i));
             }
             btn->setTag(i);
             weapMenu->addChild(btn, topZ(weapMenu) + 1);
         }
         ButtonSprite* shopSpr = ButtonSprite::create("SHOP", 0, false, "goldFont.fnt", "GJ_button_02.png", 30.0f, 0.5f);
         CCMenuItemSpriteExtra* shopBtn = CCMenuItemSpriteExtra::create(shopSpr, this, menu_selector(SandboxLayer::onShop));
-        shopBtn->setPosition(ccp(btnX, 36.0f));
+        shopBtn->setPosition(ccp(btnX, 20.0f));
         weapMenu->addChild(shopBtn, topZ(weapMenu) + 1);
 
         ButtonSprite* bgSpr = ButtonSprite::create("BG", 0, false, "goldFont.fnt", "GJ_button_04.png", 30.0f, 0.45f);
@@ -216,8 +244,8 @@ public:
             FLAlertLayer::create("Locked", "Buy this in the shop!", "OK")->show();
             return;
         }
-        if (idx == 7) { // NUKE
-            double now = CCDirector::sharedDirector()->getTotalFrames() / 60.0;
+        if (idx == 7) {
+            double now = getRealTime();
             double elapsed = now - g_lastNuke;
             if (elapsed < 300.0) {
                 int secsLeft = (int)(300.0 - elapsed);
@@ -231,17 +259,15 @@ public:
         ent.id = idx;
         ent.spr = CCSprite::create(g_weaps[idx].iconName);
         if (!ent.spr) ent.spr = CCSprite::createWithSpriteFrameName("edit_eBtn_001.png");
+        ent.spr->setColor(g_weaps[idx].color);
         ent.spr->setPosition(ccp(100, 100));
-        ent.dragging = false;
-        ent.hasHit = false;
-        ent.idleTimer = 0.0f;
-        ent.dying = false;
+        ent.dragging = false; ent.hasHit = false; ent.idleTimer = 0.0f; ent.dying = false;
         this->addChild(ent.spr, topZ(this) + 1);
         ents.push_back(ent);
     }
 
     void startNuke() {
-        g_lastNuke = CCDirector::sharedDirector()->getTotalFrames() / 60.0;
+        g_lastNuke = getRealTime();
         CCSize winSize = CCDirector::sharedDirector()->getWinSize();
         nukeWarn = CCLabelBMFont::create("NUKE INCOMING!!!!!!!!!!!!", "bigFont.fnt");
         nukeWarn->setPosition(ccp(winSize.width / 2, winSize.height / 2));
@@ -255,37 +281,31 @@ public:
     }
 
     void nukeExplode(float) {
-        if (nukeWarn) nukeWarn->removeFromParent();
+        if (nukeWarn) { nukeWarn->removeFromParent(); nukeWarn = nullptr; }
         CCLayerColor* flash = CCLayerColor::create(ccc4(255, 255, 255, 255));
         this->addChild(flash, topZ(this) + 1);
         flash->runAction(CCSequence::create(CCFadeOut::create(1.2f), CCRemoveSelf::create(), nullptr));
-        
         FMODAudioEngine::sharedEngine()->playEffect("axiom.cube-abuse/boom.mp3"); // from deltarune btw lmao
-
-        dealDmg(999);
+        dealDmg(9999999.0f);
         g_coins += 1500 + rand() % 1000;
-        refreshCoinHud();
-        saveWeaps();
+        refreshCoinHud(); saveWeaps();
     }
 
     void onShop(CCObject*) {
         if (shopOpen) return;
         shopOpen = true;
-        ShopLayer* shop = ShopLayer::create([this]() { shopOpen = false; saveWeaps(); });
+        ShopLayer* shop = ShopLayer::create(
+            [this]() { shopOpen = false; saveWeaps(); this->refreshCoinHud(); },
+            [this]() { this->refreshCoinHud(); }
+        );
         shop->show();
     }
 
     void setupCloseButton() {
-        CCMenu* m = CCMenu::create();
-        m->setPosition(ccp(0, 0));
-        CCMenuItemSpriteExtra* b = CCMenuItemSpriteExtra::create(
-            CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png"),
-            this,
-            menu_selector(SandboxLayer::onClose)
-        );
+        CCMenu* m = CCMenu::create(); m->setPosition(ccp(0, 0));
+        CCMenuItemSpriteExtra* b = CCMenuItemSpriteExtra::create(CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png"), this, menu_selector(SandboxLayer::onClose));
         b->setPosition(ccp(25, CCDirector::sharedDirector()->getWinSize().height - 25));
-        m->addChild(b, topZ(m) + 1);
-        this->addChild(m, topZ(this) + 1);
+        m->addChild(b, topZ(m) + 1); this->addChild(m, topZ(this) + 1);
     }
 
     void onClose(CCObject*) {
@@ -304,7 +324,17 @@ public:
     }
 
     void physicsUpdate(float dt) {
-        if (!g_bodyInit) return;
+        if (nukeCoolLabel) {
+            double now = getRealTime();
+            double elapsed = now - g_lastNuke;
+            if (elapsed < 300.0) {
+                int secsLeft = (int)(300.0 - elapsed);
+                nukeCoolLabel->setString(fmt::format("{}s", secsLeft).c_str());
+            } else {
+                nukeCoolLabel->setString("READY");
+            }
+        }
+        if (!g_bodyInit || !iconPlayer) return;
         if (g_body.dragging) { prevDrag = g_body.pos; return; }
         g_body.vel.y -= 850.0f * dt;
         g_body.pos.x += g_body.vel.x * dt;
@@ -329,92 +359,60 @@ public:
             wallDmgCheck(impactSpeed, false);
         }
         iconPlayer->setPosition(g_body.pos);
-
         std::vector<int> toKill;
         for (int i = 0; i < (int)ents.size(); i++) {
             WepEnt& ent = ents[i];
             if (ent.dying) continue;
-            if (ent.dragging) {
-                ent.idleTimer = 0.0f;
-            } else {
+            if (ent.dragging) { ent.idleTimer = 0.0f; } else {
                 ent.idleTimer += dt;
-                if (ent.idleTimer >= 8.0f && ent.idleTimer < 10.0f) {
-                    ent.spr->setOpacity((GLubyte)((1.0f - (ent.idleTimer - 8.0f) / 2.0f) * 255));
-                }
-                if (ent.idleTimer >= 10.0f) {
-                    ent.dying = true;
-                    toKill.push_back(i);
-                }
+                if (ent.idleTimer >= 8.0f && ent.idleTimer < 10.0f) { ent.spr->setOpacity((GLubyte)((1.0f - (ent.idleTimer - 8.0f) / 2.0f) * 255)); }
+                if (ent.idleTimer >= 10.0f) { ent.dying = true; toKill.push_back(i); }
             }
         }
         for (int i = (int)toKill.size() - 1; i >= 0; i--) {
             int idx = toKill[i];
-            ents[idx].spr->removeFromParent();
+            if (ents[idx].spr) ents[idx].spr->removeFromParent();
             ents.erase(ents.begin() + idx);
         }
-
         for (WepEnt& ent : ents) {
-            if (!ent.dragging) continue;
+            if (!ent.dragging || !ent.spr) continue;
             bool overlapping = ent.spr->boundingBox().intersectsRect(iconPlayer->boundingBox());
             if (overlapping && !ent.hasHit) {
-                float totalDmg = (float)g_weaps[ent.id].damage + calcDmgBonus();
+                float totalDmg = (float)g_weaps[ent.id].damage * calcDmgMulti();
                 dealDmg(totalDmg);
                 ent.hasHit = true;
                 g_body.vel = ccp(-80 + rand() % 160, 250);
-                ent.spr->runAction(CCSequence::create(
-                    CCScaleTo::create(0.05f, 1.3f),
-                    CCScaleTo::create(0.05f, 1.0f),
-                    nullptr
-                ));
-            } else if (!overlapping && ent.hasHit) {
-                ent.hasHit = false;
-            }
+                ent.spr->runAction(CCSequence::create(CCScaleTo::create(0.05f, 1.3f), CCScaleTo::create(0.05f, 1.0f), nullptr));
+            } else if (!overlapping && ent.hasHit) { ent.hasHit = false; }
         }
     }
 
     bool ccTouchBegan(CCTouch* t, CCEvent*) override {
         CCPoint p = t->getLocation();
         for (WepEnt& ent : ents) {
-            if (ccpDistance(p, ent.spr->getPosition()) < 45.0f) {
-                ent.dragging = true;
-                ent.hasHit = false;
-                ent.idleTimer = 0.0f;
-                ent.spr->setOpacity(255);
-                ent.offset = ent.spr->getPosition() - p;
-                return true;
+            if (ent.spr && ccpDistance(p, ent.spr->getPosition()) < 45.0f) {
+                ent.dragging = true; ent.hasHit = false; ent.idleTimer = 0.0f;
+                ent.spr->setOpacity(255); ent.offset = ent.spr->getPosition() - p; return true;
             }
         }
         if (ccpDistance(p, g_body.pos) < 65.0f) {
-            g_body.dragging = true;
-            g_body.dragOffset = g_body.pos - p;
-            prevDrag = g_body.pos;
-            dragVel = ccp(0, 0);
-            return true;
+            g_body.dragging = true; g_body.dragOffset = g_body.pos - p; prevDrag = g_body.pos; dragVel = ccp(0, 0); return true;
         }
         return true;
     }
 
     void ccTouchMoved(CCTouch* t, CCEvent*) override {
         CCPoint p = t->getLocation();
-        for (WepEnt& ent : ents) {
-            if (ent.dragging) ent.spr->setPosition(p + ent.offset);
-        }
+        for (WepEnt& ent : ents) { if (ent.dragging && ent.spr) ent.spr->setPosition(p + ent.offset); }
         if (g_body.dragging) {
-            CCPoint newPos = p + g_body.dragOffset;
-            dragVel = ccpSub(newPos, g_body.pos);
-            prevDrag = g_body.pos;
-            g_body.pos = newPos;
-            iconPlayer->setPosition(g_body.pos);
+            CCPoint nP = p + g_body.dragOffset; dragVel = ccpSub(nP, g_body.pos);
+            prevDrag = g_body.pos; g_body.pos = nP; if (iconPlayer) iconPlayer->setPosition(g_body.pos);
         }
     }
 
     void ccTouchEnded(CCTouch*, CCEvent*) override {
         for (WepEnt& ent : ents) ent.dragging = false;
-        if (g_body.dragging) {
-            g_body.vel = ccp(dragVel.x * 60.0f, dragVel.y * 60.0f);
-            g_body.dragging = false;
-            dragVel = ccp(0, 0);
-        }
+        if (g_body.dragging) { g_body.vel = ccp(dragVel.x * 60.0f, dragVel.y * 60.0f); g_body.dragging = false; dragVel = ccp(0, 0); }
     }
 };
 
@@ -422,20 +420,12 @@ class $modify(MyMenuLayer, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) return false;
         loadWeaps();
-
         CCNode* bottomMenu = this->getChildByID("bottom-menu");
-
         CCSprite* iconSpr = CCSprite::create("logo.png"_spr);
         if (!iconSpr) iconSpr = CCSprite::createWithSpriteFrameName("GJ_hammerIcon_001.png");
-
         CCMenuItemSpriteExtra* b = CCMenuItemSpriteExtra::create(iconSpr, this, menu_selector(MyMenuLayer::onSandbox));
         b->setID("axiom-sandbox-btn");
-
-        if (bottomMenu) {
-            bottomMenu->addChild(b);
-            bottomMenu->updateLayout();
-        }
-
+        if (bottomMenu) { bottomMenu->addChild(b); bottomMenu->updateLayout(); }
         return true;
     }
 
