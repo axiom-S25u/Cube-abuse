@@ -1,4 +1,5 @@
 #include "ui.hpp"
+#include "bg.hpp"
 #include <Geode/modify/MenuLayer.hpp>
 #include <cstdlib>
 #include <chrono>
@@ -56,6 +57,9 @@ public:
         CCLayerColor* bg = CCLayerColor::create(ccc4(18, 8, 32, 255));
         bg->setContentSize(winSize);
         this->addChild(bg, topZ(this) + 1);
+
+        g_bgFile = Mod::get()->getSavedValue<std::string>("bg_file", "");
+        loadBgToLayer(this, topZ(this) + 1);
 
         spawnCube();
         setupHpBar();
@@ -211,14 +215,17 @@ public:
         weapMenu->setPosition(ccp(0.0f, 0.0f));
         this->addChild(weapMenu, topZ(this) + 1);
         float btnX = winSize.width - 45.0f;
+        float btnXLeft = 45.0f;
         float startY = winSize.height - 60.0f;
         for (int i = 0; i < WEP_COUNT; i++) {
             ButtonSprite* bspr = ButtonSprite::create(g_weaps[i].name, 0, false, "goldFont.fnt", "GJ_button_01.png", 30.0f, 0.25f);
             CCMenuItemSpriteExtra* btn = CCMenuItemSpriteExtra::create(bspr, this, menu_selector(SandboxLayer::onWeapon));
             if (i == 7) { // NUKE
                 btn->setPosition(ccp(winSize.width - 110.0f, 20.0f));
+            } else if (i >= 8) {
+                btn->setPosition(ccp(btnXLeft, startY - 34.0f * (float)(i - 8)));
             } else {
-                btn->setPosition(ccp(btnX, startY - 34.0f * i));
+                btn->setPosition(ccp(btnX, startY - 34.0f * (float)i));
             }
             btn->setTag(i);
             weapMenu->addChild(btn, topZ(weapMenu) + 1);
@@ -235,7 +242,11 @@ public:
     }
 
     void onBgCustomizer(CCObject*) {
-        FLAlertLayer::create("Coming Soon", "hollup bud i gotta code this wait a bit", "OK")->show();
+        BgPicker* picker = BgPicker::create([this]() {
+            removeBgFromLayer(this);
+            loadBgToLayer(this, 2);
+        });
+        picker->show();
     }
 
     void onWeapon(CCObject* sender) {
@@ -258,6 +269,7 @@ public:
         WepEnt ent;
         ent.id = idx;
         ent.spr = CCSprite::create(g_weaps[idx].iconName);
+        if (!ent.spr) ent.spr = CCSprite::createWithSpriteFrameName(g_weaps[idx].iconName);
         if (!ent.spr) ent.spr = CCSprite::createWithSpriteFrameName("edit_eBtn_001.png");
         ent.spr->setColor(g_weaps[idx].color);
         ent.spr->setPosition(ccp(100, 100));

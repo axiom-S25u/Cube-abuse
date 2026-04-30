@@ -55,9 +55,15 @@ static WepDef g_weaps[] = {
     { "Taser",    500,   60,  ccc3(255, 255, 255), "taser.png"_spr    },
     { "Chainsaw", 1500,  85,  ccc3(255, 255, 255), "chainsaw.png"_spr },
     { "Nuke",     15000, 1000000000, ccc3(255, 255, 255), "nuke.png"_spr     }, //damage *should* be enough, as a note it wasnt
+    { "Sword",    400,   35,  ccc3(220, 220, 255), "sword.png"_spr   },
+    { "Crowbar",  700,   50,  ccc3(255, 100, 80),  "crowbar.png"_spr   },
+    { "Anvil",    1200,  95,  ccc3(120, 120, 130), "anvil.png"_spr   }, // minecraftttttttttttttttttttttttttttt
+    { "FryPan",   1000,  65,  ccc3(80, 80, 80),    "frypan.png"_spr    },
+    { "Pickaxe",  800,   55,  ccc3(200, 150, 100), "pick.png"_spr   }, // minecrafttttttttttttt
+    { "Sledge",   2200,  130, ccc3(180, 180, 220), "sledge.png"_spr },
 }; // this is for ery, if it wasnt clean enough before
-inline const int WEP_COUNT = 8;
-inline bool g_weapUnlock[] = { true, true, true, false, false, false, false, false };
+inline const int WEP_COUNT = 14;
+inline bool g_weapUnlock[] = { true, true, true, false, false, false, false, false, false, false, false, false, false, false };
 
 inline double g_lastNuke = -99999.0;
 
@@ -147,8 +153,9 @@ public:
     std::function<void()> closeCB;
     std::function<void()> buyCB;
     CCLabelBMFont* coinText = nullptr;
-    CCNode* weapNode = nullptr;
     CCNode* upgNode = nullptr;
+    ScrollLayer* weapScroll = nullptr;
+    CCMenu* weapMenu = nullptr;
 
     static ShopLayer* create(std::function<void()> cb, std::function<void()> bcb) {
         auto ret = new ShopLayer();
@@ -176,8 +183,17 @@ public:
         shopMenu->setPosition(ccp(0.0f, 0.0f));
         shopMenu->setID("purchase-menu");
         m_mainLayer->addChild(shopMenu, topZ(m_mainLayer) + 1);
-        weapNode = CCNode::create();
-        m_mainLayer->addChild(weapNode, topZ(m_mainLayer) + 1);
+        float colW = panelW * 0.55f;
+        float scrollH = panelH - 60.0f;
+        weapScroll = ScrollLayer::create(CCSizeMake(colW, scrollH));
+        weapScroll->setPosition(ccp(8.0f, 8.0f));
+        weapScroll->setAnchorPoint(ccp(0.f, 0.f));
+        weapScroll->ignoreAnchorPointForPosition(false);
+        m_mainLayer->addChild(weapScroll, topZ(m_mainLayer) + 1);
+        weapMenu = CCMenu::create();
+        weapMenu->setPosition(ccp(0.0f, 0.0f));
+        weapMenu->setContentSize(CCSizeMake(colW, scrollH));
+        weapScroll->m_contentLayer->addChild(weapMenu, topZ(weapScroll->m_contentLayer) + 1);
         buildWeapList(shopMenu, panelW, panelH);
         upgNode = CCNode::create();
         m_mainLayer->addChild(upgNode, topZ(m_mainLayer) + 1);
@@ -218,52 +234,64 @@ public:
     void rebuildDynamicContent();
 
     void buildWeapList(CCMenu* shopMenu, float panelW, float panelH) {
-        if (weapNode) weapNode->removeAllChildren();
+        if (weapMenu) weapMenu->removeAllChildren();
         float colW = panelW * 0.55f;
-        float leftX = panelW * 0.05f + colW * 0.28f;
-        float startY = panelH - 68.0f;
-        float gap = 24.0f;
+        float leftX = colW * 0.33f;
+        float gap = 22.0f;
+        float padTop = 4.0f;
+        float contentH = gap * (float)WEP_COUNT + padTop * 2.0f;
+        float scrollH = panelH - 60.0f;
+        if (contentH < scrollH) contentH = scrollH;
+        if (weapScroll) {
+            weapScroll->m_contentLayer->setContentSize(CCSizeMake(colW, contentH));
+            weapMenu->setContentSize(CCSizeMake(colW, contentH));
+        }
         for (int i = 0; i < WEP_COUNT; i++) {
             WepDef& wd = g_weaps[i];
-            float rowY = startY - gap * (i + 1);
+            float rowY = contentH - padTop - gap * ((float)i + 0.5f);
             CCLayerColor* rowBg = CCLayerColor::create(
                 (i % 2 == 0) ? ccc4(255, 255, 255, 10) : ccc4(0, 0, 0, 10),
                 colW - 12.0f, gap - 2.0f
             );
             rowBg->setPosition(ccp(6.0f, rowY - (gap - 2.0f) * 0.5f));
-            weapNode->addChild(rowBg, topZ(weapNode) + 1);
+            weapMenu->addChild(rowBg, topZ(weapMenu) + 1);
             CCSprite* iconSpr = CCSprite::create(wd.iconName);
+            if (!iconSpr) iconSpr = CCSprite::createWithSpriteFrameName(wd.iconName);
             if (!iconSpr) iconSpr = CCSprite::createWithSpriteFrameName("edit_eBtn_001.png");
             if (iconSpr) {
                 iconSpr->setPosition(ccp(leftX - 22.0f, rowY));
                 iconSpr->setScale(18.0f / iconSpr->getContentSize().height);
-                weapNode->addChild(iconSpr, topZ(weapNode) + 1);
+                weapMenu->addChild(iconSpr, topZ(weapMenu) + 1);
             }
             CCLabelBMFont* nameLbl = CCLabelBMFont::create(wd.name, "chatFont.fnt");
             nameLbl->setScale(0.46f);
             nameLbl->setAnchorPoint(ccp(0.0f, 0.5f));
             nameLbl->setPosition(ccp(leftX - 8.0f, rowY));
-            weapNode->addChild(nameLbl, topZ(weapNode) + 1);
+            weapMenu->addChild(nameLbl, topZ(weapMenu) + 1);
             if (i == 7) {
                 CCLabelBMFont* coolLbl = CCLabelBMFont::create("5m Cooldown", "chatFont.fnt");
                 coolLbl->setScale(0.25f);
                 coolLbl->setColor(ccc3(255, 100, 100));
                 coolLbl->setPosition(ccp(leftX + 25.0f, rowY - 8.0f));
-                weapNode->addChild(coolLbl, topZ(coolLbl) + 1);
+                weapMenu->addChild(coolLbl, topZ(weapMenu) + 1);
             }
             if (g_weapUnlock[i]) {
                 CCLabelBMFont* oL = CCLabelBMFont::create("OWNED", "chatFont.fnt");
                 oL->setScale(0.38f);
                 oL->setColor(ccc3(80, 255, 120));
                 oL->setPosition(ccp(leftX + 122.0f, rowY));
-                weapNode->addChild(oL, topZ(weapNode) + 1);
+                weapMenu->addChild(oL, topZ(weapMenu) + 1);
             } else {
                 ButtonSprite* buyBtnSpr = ButtonSprite::create(fmt::format("${}", wd.cost).c_str(), "chatFont.fnt", "GJ_button_01.png", 0.5f);
                 CCMenuItemSpriteExtra* bB = CCMenuItemSpriteExtra::create(buyBtnSpr, this, menu_selector(ShopLayer::onBuy));
                 bB->setPosition(ccp(leftX + 122.0f, rowY));
                 bB->setTag(i);
-                shopMenu->addChild(bB, topZ(shopMenu) + 1);
+                weapMenu->addChild(bB, topZ(weapMenu) + 1);
             }
+        }
+        if (weapScroll) {
+            weapScroll->scrollToTop();
+            handleTouchPriority(this);
         }
     }
 
