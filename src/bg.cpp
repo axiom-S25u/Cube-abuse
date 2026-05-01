@@ -1,22 +1,5 @@
 #include "bg.hpp"
 
-static bool isBandwidthDead(int code, std::string const& body) {
-    if (code == 509) return true;
-    std::string low = body;
-    for (char& c : low) c = (char)std::tolower((unsigned char)c);
-    if (low.find("bandwidth") != std::string::npos) return true;
-    if (low.find("egress") != std::string::npos) return true;
-    if (low.find("quota") != std::string::npos) return true;
-    return false;
-}
-
-static void showBwDeadAlert() {
-    FLAlertLayer::create(
-        "RIP",
-        "too many ppl downloaded and my bandwith is gone, join my server and report this pls",
-        "OK"
-    )->show();
-}
 
 BgPicker* BgPicker::create(std::function<void()> cb) {
     BgPicker* ret = new BgPicker();
@@ -71,21 +54,13 @@ void BgPicker::onClear(CCObject*) {
 
 void BgPicker::fetchList() {
     web::WebRequest req = web::WebRequest();
-    req.header("apikey", std::string(SUPA_KEY));
-    req.header("Authorization", std::string("Bearer ") + SUPA_KEY);
-    req.header("Content-Type", "application/json");
-    req.bodyString("{\"prefix\":\"\",\"limit\":100,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
+    req.header("User-Agent", "CubeAbuse/1.0");
 
     m_listReq.spawn(
-        req.post(SUPA_LIST),
+        req.get(GH_API_LIST),
         [this](web::WebResponse res) {
             std::string raw = res.string().unwrapOr("[]");
-            log::info("bg list status={} body={}", res.code(), raw);
-            if (isBandwidthDead(res.code(), raw)) {
-                if (m_stat) m_stat->setString("Bandwidth dead");
-                showBwDeadAlert();
-                return;
-            }
+            log::info("gh list status={} body={}", res.code(), raw);
             if (!res.ok()) {
                 if (m_stat) m_stat->setString(fmt::format("HTTP {} fail", res.code()).c_str());
                 return;
@@ -103,7 +78,9 @@ void BgPicker::fetchList() {
             m_fnames.clear();
             for (size_t i = 0; i < json.size(); i++) {
                 matjson::Value const& item = json[i];
-                if (item.isObject() && item.contains("name")) {
+                if (item.isObject() && item.contains("name") && item.contains("type")) {
+                    geode::Result<std::string> typeRes = item["type"].asString();
+                    if (!typeRes.isOk() || typeRes.unwrap() != "file") continue;
                     geode::Result<std::string> nameRes = item["name"].asString();
                     if (nameRes.isOk()) {
                         std::string name = nameRes.unwrap();
@@ -248,16 +225,12 @@ void BgPicker::loadNextThumb() {
 
     int idx = m_thumbIdx;
     std::string fname = m_fnames[idx];
-    std::string url = std::string(SUPA_PUB) + fname;
+    std::string url = std::string(GH_RAW) + fname;
     web::WebRequest req = web::WebRequest();
     m_thumbReq.spawn(
         req.get(url),
         [this, idx, fname](web::WebResponse res) {
             std::string rawBody = res.string().unwrapOr("");
-            if (isBandwidthDead(res.code(), rawBody)) {
-                showBwDeadAlert();
-                return;
-            }
             if (res.ok()) {
                 geode::ByteVector bytes = res.data();
                 std::filesystem::path dir = bgCacheDir();
@@ -274,18 +247,13 @@ void BgPicker::loadNextThumb() {
 }
 
 void BgPicker::dlImage(std::string const& fname) {
-    std::string url = std::string(SUPA_PUB) + fname;
+    std::string url = std::string(GH_RAW) + fname;
     web::WebRequest req = web::WebRequest();
 
     m_dlReq.spawn(
         req.get(url),
         [this, fname](web::WebResponse res) {
             std::string rawBody = res.string().unwrapOr("");
-            if (isBandwidthDead(res.code(), rawBody)) {
-                if (m_stat) m_stat->setString("Bandwidth dead");
-                showBwDeadAlert();
-                return;
-            }
             if (!res.ok()) {
                 if (m_stat) m_stat->setString("Download failed");
                 return;

@@ -6,10 +6,8 @@
 
 using namespace geode::prelude;
 
-inline const char* SUPA_LIST = "https://rofsqpnniqmwsmgkcjus.supabase.co/storage/v1/object/list/gallery";
-inline const char* SUPA_PUB = "https://rofsqpnniqmwsmgkcjus.supabase.co/storage/v1/object/public/gallery/";
-inline const char* SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJvZnNxcG5uaXFtd3NtZ2tjanVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NjUyODYsImV4cCI6MjA5MzE0MTI4Nn0.5rUKJHnIOpbiakhpdc-ry4f1U1nCUi6eg_Bc9KSuVbA";
- // i know its in here, its just the anon its not secret
+inline const char* GH_API_LIST = "https://api.github.com/repos/axiom-S25u/Cube-Abuse-Bg/contents";
+inline const char* GH_RAW = "https://raw.githubusercontent.com/axiom-S25u/Cube-Abuse-Bg/main/";
 inline std::string g_bgFile = "";
 
 static int bgTopZ(CCNode* p) {
