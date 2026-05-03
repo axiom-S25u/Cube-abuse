@@ -1,5 +1,9 @@
 #include "ui.hpp"
 #include "bg.hpp"
+#include "OverlayRendering.h"
+#include "vfx/ImpactFlash.h"
+#include "vfx/ImpactNoise.h"
+#include "vfx/ObjectMotionBlurPipeline.h"
 #include <Geode/modify/MenuLayer.hpp>
 #include <cstdlib>
 #include <chrono>
@@ -25,6 +29,11 @@ public:
     CCLabelBMFont* coinText = nullptr;
     CCLabelBMFont* nukeWarn = nullptr;
     CCLabelBMFont* nukeCoolLabel = nullptr;
+    CCLabelBMFont* speedLabel = nullptr;
+    WallHitVfxState wallHitVfx;
+    vfx::ImpactFlashState impactFlash;
+    vfx::ImpactNoiseState impactNoise;
+    vfx::ObjectMotionBlurPipelineState objectBlur;
     std::vector<WepEnt> ents;
     float floorY;
     float wallL;
@@ -70,6 +79,7 @@ public:
         setupCloseButton();
         setupResetButton();
         setupNukeCooldownLabel();
+        setupWallHitVfx();
 
         this->setTouchEnabled(true);
         this->setKeypadEnabled(true);
@@ -92,6 +102,46 @@ public:
 
     void spawnCube() {
         CCSize winSize = CCDirector::sharedDirector()->getWinSize();
+        if (!g_customImagePath.empty()) {
+            std::error_code ec;
+            if (std::filesystem::exists(g_customImagePath, ec)) {
+                geode::Result<geode::ByteVector> res = file::readBinary(g_customImagePath);
+                if (res.isOk()) {
+                    geode::ByteVector bytes = res.unwrap();
+                    CCImage* img = new CCImage();
+                    if (img->initWithImageData((void*)bytes.data(), (int)bytes.size())) {
+                        CCTexture2D* tex = new CCTexture2D();
+                        tex->initWithImage(img);
+                        img->release();
+                        CCSprite* customSpr = CCSprite::createWithTexture(tex);
+                        tex->release();
+                        if (customSpr) {
+                            customSpr->setScale(2.4f);
+                            customSpr->setPosition(ccp(winSize.width * 0.5f, floorY + 85.0f));
+                            customSpr->setID("custom-cube-spr");
+                            this->addChild(customSpr, topZ(this) + 1);
+                            iconPlayer = SimplePlayer::create(0);
+                            iconPlayer->setVisible(false);
+                            this->addChild(iconPlayer, topZ(this) + 1);
+                            g_bodyInit = true;
+                            g_body.node = customSpr;
+                            g_body.vel = ccp(0.0f, 0.0f);
+                            g_body.pos = customSpr->getPosition();
+                            g_body.angVel = 0.0f;
+                            g_body.angle = 0.0f;
+                            g_body.dragging = false;
+                            configureMotionBlurSource();
+                            g_cubeMaxHp = calcMaxHp();
+                            g_cubeHp = g_cubeMaxHp;
+                            g_cubeAlive = true;
+                            return;
+                        }
+                    } else {
+                        img->release();
+                    }
+                }
+            }
+        }
         GameManager* gm = GameManager::sharedState();
         iconPlayer = SimplePlayer::create(0);
         iconPlayer->updatePlayerFrame(1, IconType::Cube);
@@ -108,6 +158,7 @@ public:
         g_body.angVel = 0.0f;
         g_body.angle = 0.0f;
         g_body.dragging = false;
+        configureMotionBlurSource();
         g_cubeMaxHp = calcMaxHp();
         g_cubeHp = g_cubeMaxHp;
         g_cubeAlive = true;
@@ -182,6 +233,10 @@ public:
     }
 
     void doRespawn() {
+        if (g_body.node && g_body.node != iconPlayer) {
+            g_body.node->removeFromParent();
+        }
+        g_body.node = nullptr;
         if (iconPlayer) { iconPlayer->removeFromParent(); iconPlayer = nullptr; }
         g_respawning = false;
         spawnCube();
@@ -193,6 +248,10 @@ public:
         g_body.dragging = false;
         g_bodyInit = false;
         iconPlayer->stopAllActions();
+        if (g_body.node && g_body.node != iconPlayer) {
+            g_body.node->removeFromParent();
+        }
+        g_body.node = nullptr;
         iconPlayer->removeFromParent();
         iconPlayer = nullptr;
         g_cubeAlive = false;
@@ -235,10 +294,28 @@ public:
         shopBtn->setPosition(ccp(btnX, 20.0f));
         weapMenu->addChild(shopBtn, topZ(weapMenu) + 1);
 
+        ButtonSprite* iconSpr = ButtonSprite::create("ICON", 0, false, "goldFont.fnt", "GJ_button_05.png", 30.0f, 0.45f);
+        CCMenuItemSpriteExtra* iconBtn = CCMenuItemSpriteExtra::create(iconSpr, this, menu_selector(SandboxLayer::onIconCustomizer));
+        iconBtn->setPosition(ccp(winSize.width - 75.0f, winSize.height - 25.0f));
+        weapMenu->addChild(iconBtn, topZ(weapMenu) + 1);
+
+        ButtonSprite* resetSpr = ButtonSprite::create("RESET", 0, false, "goldFont.fnt", "GJ_button_06.png", 30.0f, 0.32f);
+        CCMenuItemSpriteExtra* resetBtn = CCMenuItemSpriteExtra::create(resetSpr, this, menu_selector(SandboxLayer::onResetIcon));
+        resetBtn->setPosition(ccp(winSize.width - 115.0f, winSize.height - 25.0f));
+        weapMenu->addChild(resetBtn, topZ(weapMenu) + 1);
+
         ButtonSprite* bgSpr = ButtonSprite::create("BG", 0, false, "goldFont.fnt", "GJ_button_04.png", 30.0f, 0.45f);
         CCMenuItemSpriteExtra* bgBtn = CCMenuItemSpriteExtra::create(bgSpr, this, menu_selector(SandboxLayer::onBgCustomizer));
         bgBtn->setPosition(ccp(winSize.width - 35.0f, winSize.height - 25.0f));
         weapMenu->addChild(bgBtn, topZ(weapMenu) + 1);
+    }
+
+    void onResetIcon(CCObject*) {
+        g_customImagePath.clear();
+        saveWeaps();
+        if (g_bodyInit || iconPlayer || g_body.node) {
+            doRespawn();
+        }
     }
 
     void onBgCustomizer(CCObject*) {
@@ -247,6 +324,27 @@ public:
             loadBgToLayer(this, 2);
         });
         picker->show();
+    }
+
+    void onIconCustomizer(CCObject*) {
+        async::spawn(file::pick(file::PickMode::OpenFile, {
+            .filters = {{ "Images", { "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp" } }}
+        }), [this](Result<std::optional<std::filesystem::path>> result) {
+            if (result.isOk()) {
+                if (auto path = result.unwrap()) {
+                    g_customImagePath = geode::utils::string::pathToString(*path);
+                    saveWeaps();
+                    if (iconPlayer) {
+                        iconPlayer->removeFromParent();
+                        iconPlayer = nullptr;
+                    }
+                    CCNode* oldCustom = this->getChildByID("custom-cube-spr");
+                    if (oldCustom) oldCustom->removeFromParent();
+                    g_bodyInit = false;
+                    spawnCube();
+                }
+            }
+        });
     }
 
     void onWeapon(CCObject* sender) {
@@ -318,11 +416,186 @@ public:
         CCMenuItemSpriteExtra* b = CCMenuItemSpriteExtra::create(CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png"), this, menu_selector(SandboxLayer::onClose));
         b->setPosition(ccp(25, CCDirector::sharedDirector()->getWinSize().height - 25));
         m->addChild(b, topZ(m) + 1); this->addChild(m, topZ(this) + 1);
+
+        // Speed label
+        speedLabel = CCLabelBMFont::create("0.0", "bigFont.fnt");
+        speedLabel->setPosition(ccp(60, CCDirector::sharedDirector()->getWinSize().height - 25));
+        speedLabel->setScale(0.5f);
+        speedLabel->setAnchorPoint(ccp(0, 0.5f));
+        this->addChild(speedLabel, topZ(this) + 1);
+    }
+
+    void setupWallHitVfx() {
+        if (wallHitVfx.layer) return;
+        CCSize winSize = CCDirector::sharedDirector()->getWinSize();
+        wallHitVfx.layer = CCNode::create();
+        this->addChild(wallHitVfx.layer, topZ(this) + 1);
+
+        // Use real kicktheiconlite impact noise system
+        auto noiseResult = overlay_rendering::attachImpactNoise(wallHitVfx.layer, winSize);
+        if (noiseResult.ok) {
+            impactNoise.sprite = noiseResult.sprite;
+            impactNoise.renderTexture = Ref<CCRenderTexture>::adopt(noiseResult.renderTexture);
+            impactNoise.composite = noiseResult.compositeSprite;
+            impactNoise.program = Ref<CCGLProgram>::adopt(noiseResult.program);
+        }
+
+        // Simple flash layer for hit feedback
+        wallHitVfx.flash = CCLayerColor::create(ccc4(255, 255, 255, 0));
+        wallHitVfx.flash->setContentSize(winSize);
+        wallHitVfx.flash->setOpacity(0);
+        wallHitVfx.flash->setVisible(false);
+        wallHitVfx.layer->addChild(wallHitVfx.flash, topZ(wallHitVfx.layer) + 1);
+    }
+
+    void configureMotionBlurSource() {
+        if (!g_body.node) return;
+        if (!objectBlur.mergeRoot) {
+            std::array<overlay_rendering::MotionBlurObjectSeed, overlay_rendering::kMotionBlurObjectCount> seeds{};
+            seeds[0].id = overlay_rendering::MotionBlurObjectId::Player;
+            seeds[0].sourceRoot = g_body.node;
+            seeds[0].enabled = true;
+            seeds[0].tuning.minBlurSpeedPx = kPlayerMinBlurSpeedPx;
+            seeds[0].tuning.maxBlurSpeedPx = kPlayerMaxBlurSpeedPx;
+            seeds[0].tuning.blurUvSpread = kPlayerBlurUvSpread;
+            seeds[0].tuning.blurStepDivisor = kPlayerBlurStepDivisor;
+            seeds[0].tuning.keepBaseVisible = kPlayerKeepBaseVisible;
+            seeds[0].tuning.alwaysCaptureWhenEnabled = true;
+            CCSize winSize = CCDirector::sharedDirector()->getWinSize();
+            vfx::object_motion_blur::attach(objectBlur, this, winSize, winSize, topZ(this) + 1, seeds);
+        } else {
+            objectBlur.objects[0].sourceRoot = g_body.node;
+            objectBlur.objects[0].enabled = true;
+        }
+    }
+
+    void finishWallFlash() {
+        if (!wallHitVfx.flash) return;
+        wallHitVfx.flash->stopAllActions();
+        wallHitVfx.flash->setOpacity(0);
+        wallHitVfx.flash->setVisible(false);
+    }
+
+    void syncBodyVisuals() {
+        if (iconPlayer) {
+            iconPlayer->setPosition(g_body.pos);
+            iconPlayer->setRotation(-CC_RADIANS_TO_DEGREES(g_body.angle));
+        }
+        if (g_body.node && g_body.node != iconPlayer) {
+            g_body.node->setPosition(g_body.pos);
+            g_body.node->setRotation(-CC_RADIANS_TO_DEGREES(g_body.angle));
+        }
+    }
+
+    CCNode* cloneBodyVisual() const {
+        if (!g_body.node) return nullptr;
+        CCSprite* src = typeinfo_cast<CCSprite*>(g_body.node);
+        if (!src) {
+            SimplePlayer* playerClone = SimplePlayer::create(0);
+            if (!playerClone) return nullptr;
+            GameManager* gm = GameManager::sharedState();
+            playerClone->updatePlayerFrame(1, IconType::Cube);
+            playerClone->setColor(gm->colorForIdx(0));
+            playerClone->setSecondColor(gm->colorForIdx(3));
+            playerClone->updateColors();
+            playerClone->setScale(g_body.node->getScale());
+            playerClone->setScaleX(g_body.node->getScaleX());
+            playerClone->setScaleY(g_body.node->getScaleY());
+            playerClone->setRotation(g_body.node->getRotation());
+            return playerClone;
+        }
+        CCSprite* clone = nullptr;
+        if (src->displayFrame()) {
+            clone = CCSprite::createWithSpriteFrame(src->displayFrame());
+        }
+        if (!clone) {
+            clone = CCSprite::createWithTexture(src->getTexture(), src->getTextureRect());
+        }
+        if (!clone) return nullptr;
+        clone->setScale(src->getScale());
+        clone->setScaleX(src->getScaleX());
+        clone->setScaleY(src->getScaleY());
+        clone->setColor(src->getColor());
+        clone->setOpacity(src->getOpacity());
+        clone->setFlipX(src->isFlipX());
+        clone->setFlipY(src->isFlipY());
+        clone->setRotation(src->getRotation());
+        return clone;
+    }
+
+    void spawnWallHitVfx(CCPoint const& hitPos, CCPoint const& hitVel, bool isFloor) {
+        if (!wallHitVfx.layer) return;
+        if (impactFlash.impactFlashCooldownRemaining <= 0.0f) {
+            impactFlash.hitstopRemaining = kImpactHitstopSeconds;
+            impactFlash.whiteFlashRemaining = kImpactFlashTotalSeconds;
+            impactFlash.impactFlashCooldownRemaining = kImpactFlashCooldownSeconds;
+            impactNoise.remaining = kImpactNoiseFadeSeconds;
+        } else if (impactNoise.remaining > 0.0f) {
+            impactNoise.extraTimeSkip += kImpactNoiseStackedImpactTimeSkip;
+        }
+        if (wallHitVfx.flash) {
+            wallHitVfx.flash->stopAllActions();
+            wallHitVfx.flash->setVisible(true);
+            wallHitVfx.flash->setOpacity(isFloor ? 160 : 200);
+            wallHitVfx.flash->runAction(CCSequence::create(
+                CCFadeTo::create(0.04f, isFloor ? 120 : 140),
+                CCFadeOut::create(0.14f),
+                CCCallFunc::create(this, callfunc_selector(SandboxLayer::finishWallFlash)),
+                nullptr
+            ));
+        }
+
+        CCNode* base = cloneBodyVisual();
+        if (!base) return;
+        if (auto* rgba = typeinfo_cast<CCNodeRGBA*>(base)) {
+            rgba->setOpacity(220);
+        }
+
+        float vx = hitVel.x;
+        float vy = hitVel.y;
+        float mag = sqrtf(vx * vx + vy * vy);
+        if (mag < 0.001f) mag = 1.0f;
+        float nx = vx / mag;
+        float ny = vy / mag;
+
+        base->setPosition(hitPos);
+        wallHitVfx.layer->addChild(base, topZ(wallHitVfx.layer) + 1);
+        base->runAction(CCSequence::create(
+            CCSpawn::create(
+                CCFadeOut::create(0.16f),
+                CCScaleTo::create(0.16f, base->getScale() * 1.05f),
+                nullptr
+            ),
+            CCRemoveSelf::create(),
+            nullptr
+        ));
+
+        for (int i = 1; i < 5; i++) {
+            CCNode* ghost = cloneBodyVisual();
+            if (!ghost) continue;
+            if (auto* rgba = typeinfo_cast<CCNodeRGBA*>(ghost)) {
+                rgba->setOpacity((GLubyte)(170 - i * 30));
+                rgba->setColor(ccc3(255, 255, 255));
+            }
+            float const back = (float)i * 10.0f;
+            ghost->setPosition(ccp(hitPos.x - nx * back, hitPos.y - ny * back));
+            wallHitVfx.layer->addChild(ghost, topZ(wallHitVfx.layer) + 1);
+            ghost->runAction(CCSequence::create(
+                CCSpawn::create(
+                    CCFadeOut::create(0.12f + 0.03f * (float)i),
+                    CCMoveBy::create(0.12f + 0.03f * (float)i, ccp(-nx * 8.0f, -ny * 8.0f)),
+                    nullptr
+                ),
+                CCRemoveSelf::create(),
+                nullptr
+            ));
+        }
     }
 
     void onClose(CCObject*) {
         saveWeaps();
         g_sandboxOpen = false;
+        vfx::object_motion_blur::release(objectBlur);
         CCDirector::sharedDirector()->popScene();
     }
 
@@ -336,6 +609,19 @@ public:
     }
 
     void physicsUpdate(float dt) {
+        vfx::impact_flash::decrementCooldown(impactFlash, dt);
+        vfx::impact_flash::decrementWhiteFlash(impactFlash, dt);
+        vfx::impact_noise::update(impactNoise, dt, impactFlash.whiteFlashRemaining > 0.0f);
+
+        if (impactFlash.hitstopRemaining > 0.0f) {
+            impactFlash.hitstopRemaining -= dt;
+            if (impactFlash.hitstopRemaining < 0.0f) {
+                impactFlash.hitstopRemaining = 0.0f;
+            }
+            vfx::object_motion_blur::refresh(objectBlur, vfx::impact_flash::currentMode(impactFlash));
+            return;
+        }
+
         if (nukeCoolLabel) {
             double now = getRealTime();
             double elapsed = now - g_lastNuke;
@@ -359,18 +645,39 @@ public:
             wallDmgCheck(impactSpeed, true);
         }
         if (g_body.pos.x < wallL + 30.0f) {
+            CCPoint hitVel = g_body.vel;
             float impactSpeed = fabsf(g_body.vel.x);
             g_body.pos.x = wallL + 30.0f;
             g_body.vel.x = -g_body.vel.x * 0.6f;
+            if (impactSpeed > 3000.0f) {
+                spawnWallHitVfx(ccp(wallL + 30.0f, g_body.pos.y), hitVel, false);
+            }
             wallDmgCheck(impactSpeed, false);
         }
         if (g_body.pos.x > wallR - 30.0f) {
+            CCPoint hitVel = g_body.vel;
             float impactSpeed = fabsf(g_body.vel.x);
             g_body.pos.x = wallR - 30.0f;
             g_body.vel.x = -g_body.vel.x * 0.6f;
+            if (impactSpeed > 3000.0f) {
+                spawnWallHitVfx(ccp(wallR - 30.0f, g_body.pos.y), hitVel, false);
+            }
             wallDmgCheck(impactSpeed, false);
         }
-        iconPlayer->setPosition(g_body.pos);
+        syncBodyVisuals();
+        // Update speed label
+        if (speedLabel) {
+            float speed = sqrtf(g_body.vel.x * g_body.vel.x + g_body.vel.y * g_body.vel.y);
+            char buf[32];
+            sprintf(buf, "%.1f", speed);
+            speedLabel->setString(buf);
+        }
+        // Update motion blur velocity
+        if (objectBlur.objects[0].enabled) {
+            objectBlur.objects[0].velocity.vx = g_body.vel.x;
+            objectBlur.objects[0].velocity.vy = g_body.vel.y;
+        }
+        vfx::object_motion_blur::refresh(objectBlur, vfx::impact_flash::currentMode(impactFlash));
         std::vector<int> toKill;
         for (int i = 0; i < (int)ents.size(); i++) {
             WepEnt& ent = ents[i];
@@ -408,7 +715,11 @@ public:
             }
         }
         if (ccpDistance(p, g_body.pos) < 65.0f) {
-            g_body.dragging = true; g_body.dragOffset = g_body.pos - p; prevDrag = g_body.pos; dragVel = ccp(0, 0); return true;
+            g_body.dragging = true; g_body.dragOffset = g_body.pos - p; prevDrag = g_body.pos; dragVel = ccp(0, 0);
+            // Hide motion blur when grabbing
+            if (objectBlur.finalCompositeSprite) objectBlur.finalCompositeSprite->setVisible(false);
+            if (objectBlur.objects[0].blurSprite) objectBlur.objects[0].blurSprite->setVisible(false);
+            return true;
         }
         return true;
     }
@@ -419,6 +730,7 @@ public:
         if (g_body.dragging) {
             CCPoint nP = p + g_body.dragOffset; dragVel = ccpSub(nP, g_body.pos);
             prevDrag = g_body.pos; g_body.pos = nP; if (iconPlayer) iconPlayer->setPosition(g_body.pos);
+            if (g_body.node && g_body.node != iconPlayer) g_body.node->setPosition(g_body.pos);
         }
     }
 

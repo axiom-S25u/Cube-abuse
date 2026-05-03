@@ -2,6 +2,9 @@
 #include <Geode/Geode.hpp>
 #include <Geode/binding/SimplePlayer.hpp>
 #include <Geode/binding/GameManager.hpp>
+#include <Geode/cocos/misc_nodes/CCRenderTexture.h>
+#include <Geode/cocos/shaders/CCGLProgram.h>
+#include "vfx/VfxTypes.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -26,6 +29,7 @@ static int topZ(CCNode* p) {
 inline bool g_sandboxOpen = false;
 inline int64_t g_coins = 0;
 inline bool g_bodyInit = false;
+inline std::string g_customImagePath = "";
 
 struct BodyShit {
     CCNode* node = nullptr;
@@ -36,7 +40,14 @@ struct BodyShit {
     bool dragging;
     CCPoint dragOffset;
 };
+
 inline BodyShit g_body;
+
+struct WallHitVfxState {
+    CCNode* layer = nullptr;
+    CCLayerColor* flash = nullptr;
+    std::vector<CCNode*> ghosts;
+};
 
 struct WepDef {
     const char* name;
@@ -94,6 +105,7 @@ inline void saveWeaps() {
     Mod::get()->setSavedValue<int>("dmg_upgrade_level", g_dmgLvl);
     Mod::get()->setSavedValue<int>("coin_upgrade_level", g_coinLvl);
     Mod::get()->setSavedValue<int64_t>("total_coins_v2", g_coins);
+    Mod::get()->setSavedValue<std::string>("custom_image_path", g_customImagePath);
 }
 
 inline void loadWeaps() {
@@ -111,6 +123,7 @@ inline void loadWeaps() {
     } else if (Mod::get()->hasSavedValue("total_coins")) {
         g_coins = (int64_t)Mod::get()->getSavedValue<int>("total_coins");
     }
+    if (Mod::get()->hasSavedValue("custom_image_path")) g_customImagePath = Mod::get()->getSavedValue<std::string>("custom_image_path");
 }
 
 static float calcMaxHp() {
