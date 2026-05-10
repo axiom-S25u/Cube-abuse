@@ -26,6 +26,16 @@ public:
     CCLabelBMFont* nukeWarn = nullptr;
     CCLabelBMFont* nukeCoolLabel = nullptr;
     std::vector<WepEnt> ents;
+    struct SpikeShit {
+        CCSprite* spr = nullptr;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        bool dead = false;
+    };
+    std::vector<SpikeShit> spikes;
+    CCLabelBMFont* spikeCoolLabel = nullptr;
+    float spikeRainLeft = 0.0f;
+    float spikeSpawnTimer = 0.0f;
     float floorY;
     float wallL;
     float wallR;
@@ -70,6 +80,7 @@ public:
         setupCloseButton();
         setupResetButton();
         setupNukeCooldownLabel();
+        setupSpikeCooldownLabel();
 
         this->setTouchEnabled(true);
         this->setKeypadEnabled(true);
@@ -157,6 +168,15 @@ public:
         this->addChild(nukeCoolLabel, topZ(this) + 1);
     }
 
+    void setupSpikeCooldownLabel() {
+        CCSize winSize = CCDirector::sharedDirector()->getWinSize();
+        spikeCoolLabel = CCLabelBMFont::create("", "chatFont.fnt");
+        spikeCoolLabel->setScale(0.3f);
+        spikeCoolLabel->setColor(ccc3(220, 140, 255));
+        spikeCoolLabel->setPosition(ccp(130.0f, 55.0f));
+        this->addChild(spikeCoolLabel, topZ(this) + 1);
+    }
+
     void dealDmg(float dmg) {
         if (!g_cubeAlive || g_respawning) return;
         g_cubeHp -= dmg;
@@ -222,6 +242,8 @@ public:
             CCMenuItemSpriteExtra* btn = CCMenuItemSpriteExtra::create(bspr, this, menu_selector(SandboxLayer::onWeapon));
             if (i == 7) { // NUKE
                 btn->setPosition(ccp(winSize.width - 110.0f, 20.0f));
+            } else if (i == SPIKE_WEP_IDX) {
+                btn->setPosition(ccp(130.0f, 30.0f));
             } else if (i >= 8) {
                 btn->setPosition(ccp(btnXLeft, startY - 34.0f * (float)(i - 8)));
             } else {
@@ -230,6 +252,11 @@ public:
             btn->setTag(i);
             weapMenu->addChild(btn, topZ(weapMenu) + 1);
         }
+        ButtonSprite* spikeUpgSpr = ButtonSprite::create("UPG", 0, false, "goldFont.fnt", "GJ_button_03.png", 30.0f, 0.4f);
+        CCMenuItemSpriteExtra* spikeUpgBtn = CCMenuItemSpriteExtra::create(spikeUpgSpr, this, menu_selector(SandboxLayer::onSpikeUpg));
+        spikeUpgBtn->setPosition(ccp(180.0f, 30.0f));
+        weapMenu->addChild(spikeUpgBtn, topZ(weapMenu) + 1);
+
         ButtonSprite* shopSpr = ButtonSprite::create("SHOP", 0, false, "goldFont.fnt", "GJ_button_02.png", 30.0f, 0.5f);
         CCMenuItemSpriteExtra* shopBtn = CCMenuItemSpriteExtra::create(shopSpr, this, menu_selector(SandboxLayer::onShop));
         shopBtn->setPosition(ccp(btnX, 20.0f));
@@ -239,6 +266,49 @@ public:
         CCMenuItemSpriteExtra* bgBtn = CCMenuItemSpriteExtra::create(bgSpr, this, menu_selector(SandboxLayer::onBgCustomizer));
         bgBtn->setPosition(ccp(winSize.width - 35.0f, winSize.height - 25.0f));
         weapMenu->addChild(bgBtn, topZ(weapMenu) + 1);
+
+    }
+
+    void startSpikeRain() {
+        g_lastSpike = getRealTime();
+        spikeRainLeft = 30.0f + spikeRainBonus(g_spikeRainLvl);
+        spikeSpawnTimer = 0.0f;
+    }
+
+    void spawnFallingSpike() {
+        CCSize winSize = CCDirector::sharedDirector()->getWinSize();
+        SpikeShit s;
+        s.spr = CCSprite::createWithSpriteFrameName("spike_01_001.png");
+        if (!s.spr) s.spr = CCSprite::createWithSpriteFrameName("edit_eBtn_001.png");
+        if (!s.spr) return;
+        s.spr->setScale(0.75f + ((rand() % 50) / 100.0f));
+        s.spr->setRotation(180.0f);
+        float xPos = 40.0f + (float)(rand() % (int)(winSize.width - 80.0f));
+        float yPos = winSize.height + 30.0f;
+        s.spr->setPosition(ccp(xPos, yPos));
+        s.spr->setColor(ccc3(220, 140, 255));
+        float baseSpeed = 260.0f + (float)(rand() % 140);
+        s.vx = 0.0f;
+        s.vy = -baseSpeed;
+        float aim = spikeAimPct(g_spikeAimLvl);
+        if (aim > 0.0f && iconPlayer) {
+            CCPoint cp = iconPlayer->getPosition();
+            float dx = cp.x - xPos;
+            float dy = cp.y - yPos;
+            float len = sqrtf(dx * dx + dy * dy);
+            if (len > 0.001f) {
+                float nx = dx / len;
+                float ny = dy / len;
+                float aimedVx = nx * baseSpeed;
+                float aimedVy = ny * baseSpeed;
+                s.vx = aimedVx * aim;
+                s.vy = (-baseSpeed) * (1.0f - aim) + aimedVy * aim;
+            }
+            float thetaDeg = atan2f(s.vy, s.vx) * 180.0f / 3.14159265f;
+            s.spr->setRotation(90.0f - thetaDeg);
+        }
+        this->addChild(s.spr, topZ(this) + 1);
+        spikes.push_back(s);
     }
 
     void onBgCustomizer(CCObject*) {
@@ -264,6 +334,18 @@ public:
                 return;
             }
             startNuke();
+            return;
+        }
+        if (idx == SPIKE_WEP_IDX) {
+            double now = getRealTime();
+            double elapsed = now - g_lastSpike;
+            if (elapsed < 200.0 || spikeRainLeft > 0.0f) {
+                int secsLeft = (int)(200.0 - elapsed);
+                if (secsLeft < 0) secsLeft = 0;
+                FLAlertLayer::create("Chill", fmt::format("Spike cooldown: {}s remaining", secsLeft).c_str(), "OK")->show();
+                return;
+            }
+            startSpikeRain();
             return;
         }
         WepEnt ent;
@@ -313,6 +395,20 @@ public:
         shop->show();
     }
 
+    void onSpikeUpg(CCObject*) {
+        if (!g_weapUnlock[SPIKE_WEP_IDX]) {
+            FLAlertLayer::create("Locked", "Buy Spikes in the shop first bro", "OK")->show();
+            return;
+        }
+        if (shopOpen) return;
+        shopOpen = true;
+        SpikeUpgPopup* up = SpikeUpgPopup::create(
+            [this]() { shopOpen = false; saveWeaps(); this->refreshCoinHud(); },
+            [this]() { this->refreshCoinHud(); }
+        );
+        up->show();
+    }
+
     void setupCloseButton() {
         CCMenu* m = CCMenu::create(); m->setPosition(ccp(0, 0));
         CCMenuItemSpriteExtra* b = CCMenuItemSpriteExtra::create(CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png"), this, menu_selector(SandboxLayer::onClose));
@@ -336,6 +432,7 @@ public:
     }
 
     void physicsUpdate(float dt) {
+        if (dt > 1.0f / 30.0f) dt = 1.0f / 30.0f;
         if (nukeCoolLabel) {
             double now = getRealTime();
             double elapsed = now - g_lastNuke;
@@ -346,6 +443,68 @@ public:
                 nukeCoolLabel->setString("READY");
             }
         }
+        if (spikeCoolLabel) {
+            if (spikeRainLeft > 0.0f) {
+                spikeCoolLabel->setString(fmt::format("RAIN {:.0f}s", spikeRainLeft).c_str());
+            } else {
+                double now = getRealTime();
+                double elapsed = now - g_lastSpike;
+                if (elapsed < 200.0) {
+                    int secsLeft = (int)(200.0 - elapsed);
+                    spikeCoolLabel->setString(fmt::format("{}s", secsLeft).c_str());
+                } else {
+                    spikeCoolLabel->setString("READY");
+                }
+            }
+        }
+        if (spikeRainLeft > 0.0f) {
+            spikeRainLeft -= dt;
+            spikeSpawnTimer -= dt;
+            if (spikeSpawnTimer <= 0.0f) {
+                spawnFallingSpike();
+                float baseT = 0.25f + ((rand() % 25) / 100.0f);
+                float mult = spikeRateMult(g_spikeMoreLvl);
+                if (mult < 0.1f) mult = 0.1f;
+                spikeSpawnTimer = baseT / mult;
+            }
+        }
+        std::vector<int> spikeKill;
+        for (int i = 0; i < (int)spikes.size(); i++) {
+            SpikeShit& s = spikes[i];
+            if (!s.spr || s.dead) { spikeKill.push_back(i); continue; }
+            s.vy -= 700.0f * dt;
+            CCPoint sp = s.spr->getPosition();
+            sp.x += s.vx * dt;
+            sp.y += s.vy * dt;
+            s.spr->setPosition(sp);
+            if (iconPlayer) {
+                CCRect cubeBox = iconPlayer->boundingBox();
+                cubeBox.origin.x -= 15.0f;
+                cubeBox.origin.y -= 15.0f;
+                cubeBox.size.width += 30.0f;
+                cubeBox.size.height += 30.0f;
+                if (s.spr->boundingBox().intersectsRect(cubeBox)) {
+                float spikeDmg = (float)g_weaps[SPIKE_WEP_IDX].damage * calcDmgMulti();
+                dealDmg(spikeDmg);
+                if (!g_body.dragging) {
+                    g_body.vel.x += ((rand() % 200) - 100);
+                    g_body.vel.y += 180.0f;
+                }
+                s.spr->runAction(CCSequence::create(CCFadeOut::create(0.15f), CCRemoveSelf::create(), nullptr));
+                s.dead = true;
+                spikeKill.push_back(i);
+                continue;
+                }
+            }
+            if (sp.y < floorY - 10.0f) {
+                s.spr->runAction(CCSequence::create(CCFadeOut::create(0.3f), CCRemoveSelf::create(), nullptr));
+                s.dead = true;
+                spikeKill.push_back(i);
+            }
+        }
+        for (int i = (int)spikeKill.size() - 1; i >= 0; i--) {
+            spikes.erase(spikes.begin() + spikeKill[i]);
+        } // rainnn rainn go awayyy come again another dayyy or something idk
         if (!g_bodyInit || !iconPlayer) return;
         if (g_body.dragging) { prevDrag = g_body.pos; return; }
         g_body.vel.y -= 850.0f * dt;
@@ -388,7 +547,12 @@ public:
         }
         for (WepEnt& ent : ents) {
             if (!ent.dragging || !ent.spr) continue;
-            bool overlapping = ent.spr->boundingBox().intersectsRect(iconPlayer->boundingBox());
+            CCRect cubeBox = iconPlayer->boundingBox();
+            cubeBox.origin.x -= 15.0f;
+            cubeBox.origin.y -= 15.0f;
+            cubeBox.size.width += 30.0f;
+            cubeBox.size.height += 30.0f;
+            bool overlapping = ent.spr->boundingBox().intersectsRect(cubeBox);
             if (overlapping && !ent.hasHit) {
                 float totalDmg = (float)g_weaps[ent.id].damage * calcDmgMulti();
                 dealDmg(totalDmg);

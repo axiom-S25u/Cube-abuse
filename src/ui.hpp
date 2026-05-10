@@ -61,11 +61,14 @@ static WepDef g_weaps[] = {
     { "FryPan",   1000,  65,  ccc3(80, 80, 80),    "frypan.png"_spr    },
     { "Pickaxe",  800,   55,  ccc3(200, 150, 100), "pick.png"_spr   }, // minecrafttttttttttttt
     { "Sledge",   2200,  130, ccc3(180, 180, 220), "sledge.png"_spr },
+    { "Spikes",   25000, 35,  ccc3(200, 120, 255), "spike_01_001.png" },
 }; // this is for ery, if it wasnt clean enough before
-inline const int WEP_COUNT = 14;
-inline bool g_weapUnlock[] = { true, true, true, false, false, false, false, false, false, false, false, false, false, false };
+inline const int WEP_COUNT = 15;
+inline const int SPIKE_WEP_IDX = 14;
+inline bool g_weapUnlock[] = { true, true, true, false, false, false, false, false, false, false, false, false, false, false, false };
 
 inline double g_lastNuke = -99999.0;
+inline double g_lastSpike = -99999.0;
 
 inline const int HP_MAX_UPG = 60;
 inline int g_hpLvl = 0;
@@ -75,6 +78,15 @@ inline int g_dmgLvl = 0;
 
 inline const int COIN_MAX_UPG = 60;
 inline int g_coinLvl = 0;
+
+inline const int SPIKE_AIM_MAX = 14;
+inline int g_spikeAimLvl = 0;
+
+inline const int SPIKE_MORE_MAX = 10;
+inline int g_spikeMoreLvl = 0;
+
+inline const int SPIKE_RAIN_MAX = 10;
+inline int g_spikeRainLvl = 0;
 
 struct WepEnt {
     CCSprite* spr = nullptr;
@@ -93,6 +105,9 @@ inline void saveWeaps() {
     Mod::get()->setSavedValue<int>("hp_upgrade_level", g_hpLvl);
     Mod::get()->setSavedValue<int>("dmg_upgrade_level", g_dmgLvl);
     Mod::get()->setSavedValue<int>("coin_upgrade_level", g_coinLvl);
+    Mod::get()->setSavedValue<int>("spike_aim_level", g_spikeAimLvl);
+    Mod::get()->setSavedValue<int>("spike_more_level", g_spikeMoreLvl);
+    Mod::get()->setSavedValue<int>("spike_rain_level", g_spikeRainLvl);
     Mod::get()->setSavedValue<int64_t>("total_coins_v2", g_coins);
 }
 
@@ -106,6 +121,9 @@ inline void loadWeaps() {
     if (Mod::get()->hasSavedValue("hp_upgrade_level")) g_hpLvl = Mod::get()->getSavedValue<int>("hp_upgrade_level");
     if (Mod::get()->hasSavedValue("dmg_upgrade_level")) g_dmgLvl = Mod::get()->getSavedValue<int>("dmg_upgrade_level");
     if (Mod::get()->hasSavedValue("coin_upgrade_level")) g_coinLvl = Mod::get()->getSavedValue<int>("coin_upgrade_level");
+    if (Mod::get()->hasSavedValue("spike_aim_level")) g_spikeAimLvl = Mod::get()->getSavedValue<int>("spike_aim_level");
+    if (Mod::get()->hasSavedValue("spike_more_level")) g_spikeMoreLvl = Mod::get()->getSavedValue<int>("spike_more_level");
+    if (Mod::get()->hasSavedValue("spike_rain_level")) g_spikeRainLvl = Mod::get()->getSavedValue<int>("spike_rain_level");
     if (Mod::get()->hasSavedValue("total_coins_v2")) {
         g_coins = Mod::get()->getSavedValue<int64_t>("total_coins_v2");
     } else if (Mod::get()->hasSavedValue("total_coins")) {
@@ -138,6 +156,40 @@ static int64_t dmgCost(int lvl) {
 static int64_t coinCost(int lvl) {
     if (lvl >= COIN_MAX_UPG) return -1;
     return (int64_t)(500 * powf(2.0f, (float)lvl));
+}
+
+static float spikeAimPct(int lvl) {
+    if (lvl <= 0) return 0.0f;
+    if (lvl > SPIKE_AIM_MAX) lvl = SPIKE_AIM_MAX;
+    return 0.10f + (float)lvl * 0.10f;
+}
+
+static float spikeRateMult(int lvl) {
+    if (lvl < 0) lvl = 0;
+    if (lvl > SPIKE_MORE_MAX) lvl = SPIKE_MORE_MAX;
+    return 1.0f + (float)lvl * 0.15f;
+}
+
+static int64_t spikeAimCost(int lvl) {
+    if (lvl >= SPIKE_AIM_MAX) return -1;
+    if (lvl >= 7) return (int64_t)50000 * (int64_t)(lvl - 6);
+    return (int64_t)15000 * (int64_t)(lvl + 1);
+}
+
+static float spikeRainBonus(int lvl) {
+    if (lvl < 0) lvl = 0;
+    if (lvl > SPIKE_RAIN_MAX) lvl = SPIKE_RAIN_MAX;
+    return (float)lvl * 3.0f;
+}
+
+static int64_t spikeRainCost(int lvl) {
+    if (lvl >= SPIKE_RAIN_MAX) return -1;
+    return (int64_t)15000;
+}
+
+static int64_t spikeMoreCost(int lvl) {
+    if (lvl >= SPIKE_MORE_MAX) return -1;
+    return (int64_t)17000 * (int64_t)(lvl + 1);
 }
 
 static int64_t killReward(float maxHp) {
@@ -255,7 +307,12 @@ public:
             );
             rowBg->setPosition(ccp(6.0f, rowY - (gap - 2.0f) * 0.5f));
             weapMenu->addChild(rowBg, topZ(weapMenu) + 1);
-            CCSprite* iconSpr = CCSprite::create(wd.iconName);
+            CCSprite* iconSpr = nullptr;
+            if (i == SPIKE_WEP_IDX) {
+                iconSpr = CCSprite::createWithSpriteFrameName(wd.iconName);
+            } else {
+                iconSpr = CCSprite::create(wd.iconName);
+            }
             if (!iconSpr) iconSpr = CCSprite::createWithSpriteFrameName(wd.iconName);
             if (!iconSpr) iconSpr = CCSprite::createWithSpriteFrameName("edit_eBtn_001.png");
             if (iconSpr) {
@@ -273,6 +330,13 @@ public:
                 coolLbl->setScale(0.25f);
                 coolLbl->setColor(ccc3(255, 100, 100));
                 coolLbl->setPosition(ccp(leftX + 25.0f, rowY - 8.0f));
+                weapMenu->addChild(coolLbl, topZ(weapMenu) + 1);
+            }
+            if (i == SPIKE_WEP_IDX) {
+                CCLabelBMFont* coolLbl = CCLabelBMFont::create("200s CD, 30s rain", "chatFont.fnt");
+                coolLbl->setScale(0.25f);
+                coolLbl->setColor(ccc3(200, 120, 255));
+                coolLbl->setPosition(ccp(leftX + 30.0f, rowY - 8.0f));
                 weapMenu->addChild(coolLbl, topZ(weapMenu) + 1);
             }
             if (g_weapUnlock[i]) {
@@ -344,3 +408,145 @@ inline void ShopLayer::rebuildDynamicContent() {
     buildUpgSection(shopMenu, panelW, panelH);
     refreshCoins();
 }
+
+class SpikeUpgPopup : public Popup {
+public:
+    std::function<void()> closeCB;
+    std::function<void()> buyCB;
+    CCLabelBMFont* coinLbl = nullptr;
+    CCLabelBMFont* aimInfo = nullptr;
+    CCLabelBMFont* moreInfo = nullptr;
+    CCLabelBMFont* rainInfo = nullptr;
+    CCMenu* btnMenu = nullptr;
+
+    static SpikeUpgPopup* create(std::function<void()> cb, std::function<void()> bcb) {
+        auto ret = new SpikeUpgPopup();
+        if (ret && ret->init(380.f, 300.f)) {
+            ret->closeCB = cb;
+            ret->buyCB = bcb;
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+
+    bool init(float w, float h) {
+        if (!Popup::init(w, h)) return false;
+        this->setTitle("Spike Upgrades");
+        float pw = m_mainLayer->getContentSize().width;
+        float ph = m_mainLayer->getContentSize().height;
+        coinLbl = CCLabelBMFont::create("", "chatFont.fnt");
+        coinLbl->setScale(0.55f);
+        coinLbl->setColor(ccc3(255, 215, 0));
+        coinLbl->setPosition(ccp(pw * 0.5f, ph - 35.0f));
+        m_mainLayer->addChild(coinLbl, topZ(m_mainLayer) + 1);
+        btnMenu = CCMenu::create();
+        btnMenu->setPosition(ccp(0.0f, 0.0f));
+        m_mainLayer->addChild(btnMenu, topZ(m_mainLayer) + 1);
+        rebuild();
+        return true;
+    }
+
+    void rebuild() {
+        if (!btnMenu) return;
+        btnMenu->removeAllChildren();
+        float pw = m_mainLayer->getContentSize().width;
+        float ph = m_mainLayer->getContentSize().height;
+        coinLbl->setString(fmt::format("Coins: ${}", g_coins).c_str());
+
+        if (aimInfo) { aimInfo->removeFromParent(); aimInfo = nullptr; }
+        if (moreInfo) { moreInfo->removeFromParent(); moreInfo = nullptr; }
+        if (rainInfo) { rainInfo->removeFromParent(); rainInfo = nullptr; }
+
+        float topY = ph - 65.0f;
+        aimInfo = CCLabelBMFont::create(
+            fmt::format("AimAssist [Lv {}/{}]: {:.0f}%", g_spikeAimLvl, SPIKE_AIM_MAX, spikeAimPct(g_spikeAimLvl) * 100.0f).c_str(),
+            "chatFont.fnt"
+        );
+        aimInfo->setScale(0.5f);
+        aimInfo->setColor(ccc3(220, 140, 255));
+        aimInfo->setPosition(ccp(pw * 0.5f, topY));
+        m_mainLayer->addChild(aimInfo, topZ(m_mainLayer) + 1);
+        int64_t aC = spikeAimCost(g_spikeAimLvl);
+        ButtonSprite* aimSpr = ButtonSprite::create(
+            aC >= 0 ? fmt::format("Aim ${}", aC).c_str() : "MAXED",
+            "chatFont.fnt",
+            aC >= 0 ? "GJ_button_01.png" : "GJ_button_05.png",
+            0.5f
+        );
+        CCMenuItemSpriteExtra* aimBtn = CCMenuItemSpriteExtra::create(aimSpr, this, menu_selector(SpikeUpgPopup::onAim));
+        aimBtn->setPosition(ccp(pw * 0.5f, topY - 25.0f));
+        btnMenu->addChild(aimBtn, topZ(btnMenu) + 1);
+
+        float midY = topY - 60.0f;
+        moreInfo = CCLabelBMFont::create(
+            fmt::format("More Spikes [Lv {}/{}]: +{:.0f}%", g_spikeMoreLvl, SPIKE_MORE_MAX, (spikeRateMult(g_spikeMoreLvl) - 1.0f) * 100.0f).c_str(),
+            "chatFont.fnt"
+        );
+        moreInfo->setScale(0.5f);
+        moreInfo->setColor(ccc3(255, 140, 220));
+        moreInfo->setPosition(ccp(pw * 0.5f, midY));
+        m_mainLayer->addChild(moreInfo, topZ(m_mainLayer) + 1);
+        int64_t mC = spikeMoreCost(g_spikeMoreLvl);
+        ButtonSprite* moreSpr = ButtonSprite::create(
+            mC >= 0 ? fmt::format("More ${}", mC).c_str() : "MAXED",
+            "chatFont.fnt",
+            mC >= 0 ? "GJ_button_01.png" : "GJ_button_05.png",
+            0.5f
+        );
+        CCMenuItemSpriteExtra* moreBtn = CCMenuItemSpriteExtra::create(moreSpr, this, menu_selector(SpikeUpgPopup::onMore));
+        moreBtn->setPosition(ccp(pw * 0.5f, midY - 22.0f));
+        btnMenu->addChild(moreBtn, topZ(btnMenu) + 1);
+
+        float botY = midY - 60.0f;
+        rainInfo = CCLabelBMFont::create(
+            fmt::format("Rain Time [Lv {}/{}]: {:.0f}s (+{:.0f}s)", g_spikeRainLvl, SPIKE_RAIN_MAX, 30.0f + spikeRainBonus(g_spikeRainLvl), spikeRainBonus(g_spikeRainLvl)).c_str(),
+            "chatFont.fnt"
+        );
+        rainInfo->setScale(0.5f);
+        rainInfo->setColor(ccc3(140, 200, 255));
+        rainInfo->setPosition(ccp(pw * 0.5f, botY));
+        m_mainLayer->addChild(rainInfo, topZ(m_mainLayer) + 1);
+        int64_t rC = spikeRainCost(g_spikeRainLvl);
+        ButtonSprite* rainSpr = ButtonSprite::create(
+            rC >= 0 ? fmt::format("Rain ${}", rC).c_str() : "MAXED",
+            "chatFont.fnt",
+            rC >= 0 ? "GJ_button_01.png" : "GJ_button_05.png",
+            0.5f
+        );
+        CCMenuItemSpriteExtra* rainBtn = CCMenuItemSpriteExtra::create(rainSpr, this, menu_selector(SpikeUpgPopup::onRain));
+        rainBtn->setPosition(ccp(pw * 0.5f, botY - 22.0f));
+        btnMenu->addChild(rainBtn, topZ(btnMenu) + 1);
+    }
+
+    void onAim(CCObject*) {
+        int64_t cost = spikeAimCost(g_spikeAimLvl);
+        if (cost < 0) return;
+        if (g_coins < cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
+        g_coins -= cost; g_spikeAimLvl++; saveWeaps(); rebuild();
+        if (buyCB) buyCB();
+    }
+
+    void onMore(CCObject*) {
+        int64_t cost = spikeMoreCost(g_spikeMoreLvl);
+        if (cost < 0) return;
+        if (g_coins < cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
+        g_coins -= cost; g_spikeMoreLvl++; saveWeaps(); rebuild();
+        if (buyCB) buyCB();
+    }
+
+    void onRain(CCObject*) {
+        int64_t cost = spikeRainCost(g_spikeRainLvl);
+        if (cost < 0) return;
+        if (g_coins < cost) { FLAlertLayer::create("Broke", "Not enough coins", "OK")->show(); return; }
+        g_coins -= cost; g_spikeRainLvl++; saveWeaps(); rebuild();
+        if (buyCB) buyCB();
+    }
+
+    void onClose(CCObject* o) override {
+        saveWeaps();
+        if (closeCB) closeCB();
+        Popup::onClose(o);
+    }
+};
