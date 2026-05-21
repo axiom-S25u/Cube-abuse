@@ -8,11 +8,11 @@
 	},
 	"id": "axiom.cube-abuse",
 	"name": "Cube Abuse",
-	"version": "v1.2.1",
+	"version": "v1.2.11",
 	"developer": "Axiom",
 	"tags" : ["joke", "interface", "offline"],
 	"links": {
-		"community": "https://discord.gg/TWn99qzmUA"
+		"community": "https://discord.gg/ckwYqVyXKm"
 	},
 	"resources": {
 		"sprites": [
