@@ -1,5 +1,20 @@
 #include "bg.hpp"
 
+static std::string httpErrorMessage(int code) {
+    switch (code) {
+        case 403: return "403: u got rate limited buddy, wait some time and try again";
+        case 429: return "429: too many requests buddy, give it a minute and try again";
+        default: return fmt::format("HTTP {}", code);
+    }
+}
+
+static void showHttpError(CCLabelBMFont* label, int code) {
+    if (!label) return;
+    std::string message = httpErrorMessage(code);
+    label->setString(message.c_str());
+    label->setScale(0.38f);
+    label->setVisible(true);
+}
 
 BgPicker* BgPicker::create(std::function<void()> cb) {
     BgPicker* ret = new BgPicker();
@@ -62,7 +77,7 @@ void BgPicker::fetchList() {
             std::string raw = res.string().unwrapOr("[]");
             log::info("gh list status={} body={}", res.code(), raw);
             if (!res.ok()) {
-                if (m_stat) m_stat->setString(fmt::format("HTTP {} fail", res.code()).c_str());
+                showHttpError(m_stat, res.code());
                 return;
             }
             geode::Result<matjson::Value, matjson::ParseError> parsed = matjson::Value::parse(raw);
@@ -124,6 +139,8 @@ void BgPicker::buildList() {
 
     CCMenu* menu = CCMenu::create();
     menu->setPosition(ccp(0, 0));
+    menu->setContentSize(CCSizeMake(scrollW, totalH));
+    menu->ignoreAnchorPointForPosition(true);
     m_scroll->m_contentLayer->addChild(menu, bgTopZ(m_scroll->m_contentLayer) + 1);
 
     m_thumbHolders.clear();
@@ -174,9 +191,8 @@ void BgPicker::onPick(CCObject* sender) {
     if (idx < 0 || idx >= (int)m_fnames.size()) return;
     std::string fname = m_fnames[idx];
 
-    std::filesystem::path cached = bgCacheDir() / fname;
-    std::error_code ec;
-    if (std::filesystem::exists(cached, ec)) {
+    asp::fs::Path cached = bgCacheDir() / fname;
+    if (cached.exists()) {
         g_bgFile = fname;
         Mod::get()->setSavedValue<std::string>("bg_file", fname);
         if (m_doneCB) m_doneCB();
@@ -212,9 +228,8 @@ void BgPicker::populateThumb(int idx) {
 
 void BgPicker::loadNextThumb() {
     while (m_thumbIdx < (int)m_fnames.size()) {
-        std::filesystem::path cached = bgCacheDir() / m_fnames[m_thumbIdx];
-        std::error_code ec;
-        if (std::filesystem::exists(cached, ec)) {
+        asp::fs::Path cached = bgCacheDir() / m_fnames[m_thumbIdx];
+        if (cached.exists()) {
             populateThumb(m_thumbIdx);
             m_thumbIdx++;
             continue;
@@ -233,12 +248,13 @@ void BgPicker::loadNextThumb() {
             std::string rawBody = res.string().unwrapOr("");
             if (res.ok()) {
                 geode::ByteVector bytes = res.data();
-                std::filesystem::path dir = bgCacheDir();
-                std::error_code ec;
-                std::filesystem::create_directories(dir, ec);
-                std::filesystem::path fpath = dir / fname;
+                asp::fs::Path dir = bgCacheDir();
+                (void)asp::fs::createDirAll(dir);
+                asp::fs::Path fpath = dir / fname;
                 geode::Result<> wr = file::writeBinary(fpath, bytes);
                 if (wr.isOk()) populateThumb(idx);
+            } else {
+                showHttpError(m_stat, res.code());
             }
             m_thumbIdx++;
             loadNextThumb();
@@ -255,14 +271,13 @@ void BgPicker::dlImage(std::string const& fname) {
         [this, fname](web::WebResponse res) {
             std::string rawBody = res.string().unwrapOr("");
             if (!res.ok()) {
-                if (m_stat) m_stat->setString("Download failed");
+                showHttpError(m_stat, res.code());
                 return;
             }
             geode::ByteVector bytes = res.data();
-            std::filesystem::path dir = bgCacheDir();
-            std::error_code ec;
-            std::filesystem::create_directories(dir, ec);
-            std::filesystem::path fpath = dir / fname;
+            asp::fs::Path dir = bgCacheDir();
+            (void)asp::fs::createDirAll(dir);
+            asp::fs::Path fpath = dir / fname;
             geode::Result<> writeRes = file::writeBinary(fpath, bytes);
             if (!writeRes.isOk()) {
                 if (m_stat) m_stat->setString("Save failed bruh");
@@ -290,20 +305,19 @@ void BgPicker::onImport(CCObject*) {
                 FLAlertLayer::create("RIP", "Pick failed", "OK")->show();
                 return;
             }
-            std::optional<std::filesystem::path> maybe = res.unwrap();
+            std::optional<asp::fs::Path> maybe = res.unwrap();
             if (!maybe.has_value()) return;
-            std::filesystem::path srcPath = maybe.value();
+            asp::fs::Path srcPath = maybe.value();
             geode::Result<geode::ByteVector> readRes = file::readBinary(srcPath);
             if (!readRes.isOk()) {
                 FLAlertLayer::create("RIP", "Couldnt read that file", "OK")->show();
                 return;
             }
-            std::string fname = geode::utils::string::pathToString(srcPath.filename());
+            std::string fname = std::string(srcPath.filename().value_or(""));
             if (fname.empty()) fname = "imported.png";
-            std::filesystem::path dstDir = bgCacheDir();
-            std::error_code ec;
-            std::filesystem::create_directories(dstDir, ec);
-            std::filesystem::path dst = dstDir / fname;
+            asp::fs::Path dstDir = bgCacheDir();
+            (void)asp::fs::createDirAll(dstDir);
+            asp::fs::Path dst = dstDir / fname;
             geode::Result<> writeRes = file::writeBinary(dst, readRes.unwrap());
             if (!writeRes.isOk()) {
                 FLAlertLayer::create("RIP", "Save failed lmao", "OK")->show();
@@ -312,7 +326,7 @@ void BgPicker::onImport(CCObject*) {
             CCSprite* test = makeBgSprFromDisk(fname);
             if (!test) {
                 FLAlertLayer::create("RIP", "That image format aint supported", "OK")->show();
-                std::filesystem::remove(dst, ec);
+                (void)asp::fs::removeFile(dst);
                 return;
             }
             g_bgFile = fname;

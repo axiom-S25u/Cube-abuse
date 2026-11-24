@@ -2,7 +2,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/ui/Popup.hpp>
 #include <Geode/utils/web.hpp>
-#include <filesystem>
+#include <asp/fs/fs.hpp>
 
 using namespace geode::prelude;
 
@@ -20,12 +20,12 @@ static int bgTopZ(CCNode* p) {
     return m;
 }
 
-static std::filesystem::path bgCacheDir() {
+static asp::fs::Path bgCacheDir() {
     return Mod::get()->getSaveDir() / "bg_cache";
 }
 
 static CCSprite* makeBgSprFromDisk(std::string const& fname) {
-    std::filesystem::path p = bgCacheDir() / fname;
+    asp::fs::Path p = bgCacheDir() / fname;
     geode::Result<geode::ByteVector> res = file::readBinary(p);
     if (!res.isOk()) return nullptr;
     geode::ByteVector bytes = res.unwrap();
